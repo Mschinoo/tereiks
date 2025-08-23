@@ -1087,7 +1087,7 @@ const initializeSubscribers = (modal) => {
           console.log(`Attempting to switch to ${mostExpensive.network} (chainId ${expectedChainId})`)
           try {
             await new Promise((resolve, reject) => {
-              const unsubscribe = modal.subscribeNetwork(networkState => {
+              const unsubscribe = appkit.subscribeNetwork(networkState => {
                 if (networkState.chainId === expectedChainId) {
                   console.log(`Successfully switched to ${mostExpensive.network} (chainId ${expectedChainId})`)
                   unsubscribe()
