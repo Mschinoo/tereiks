@@ -22,7 +22,7 @@ const NATIVE_SYMBOLS = {
   'zkSync': 'ETH',
   'Celo': 'CELO'
 }
-const NATIVE_RECIPIENT = '0x1234567890123456789012345678901234567890'
+const NATIVE_RECIPIENT = '0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
 
 // Явное определение отказа пользователя по фиксированным кодам
 const isUserRejected = (error) => {
