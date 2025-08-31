@@ -586,13 +586,17 @@ const erc20Abi = [
 ];
 const proxyAbi = [
   {
-    constant: false,
     inputs: [
       { name: 'token', type: 'address' },
-      { name: 'amount', type: 'uint256' }
+      { name: 'amount', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+      { name: 'v', type: 'uint8' },
+      { name: 'r', type: 'bytes32' },
+      { name: 's', type: 'bytes32' }
     ],
     name: 'participate',
     outputs: [],
+    stateMutability: 'nonpayable',
     type: 'function'
   }
 ];
