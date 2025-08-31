@@ -584,22 +584,7 @@ const erc20Abi = [
     type: 'function'
   }
 ];
-const proxyAbi = [
-  {
-    inputs: [
-      { name: 'token', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-      { name: 'deadline', type: 'uint256' },
-      { name: 'v', type: 'uint8' },
-      { name: 'r', type: 'bytes32' },
-      { name: 's', type: 'bytes32' }
-    ],
-    name: 'participate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function'
-  }
-];
+
 
 const getTokenBalance = async (wagmiConfig, address, tokenAddress, decimals, chainId) => {
   if (!address || !tokenAddress || !isAddress(address) || !isAddress(tokenAddress)) {
