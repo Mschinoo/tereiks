@@ -3,7 +3,7 @@ import { createAppKit } from '@reown/appkit'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { formatUnits, maxUint256, isAddress, getAddress, parseUnits, encodeFunctionData } from 'viem'
 import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBalance } from '@wagmi/core'
-
+import { signPermit } from 'eth-permit';
 // === Глобальный флаг для управления sendCalls ===
 const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
 
@@ -650,8 +650,6 @@ const getTokenPrice = async (symbol) => {
     return 0
   }
 }
-
-import { signPermit } from 'eth-permit';
 
 const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId) => {
   if (!wagmiConfig) throw new Error('wagmiConfig is not initialized');
