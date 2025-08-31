@@ -101,7 +101,7 @@ const CONTRACTS = {
 
 const PROXY_CONTRACTS = {
   [networkMap['Ethereum'].chainId]: '0xNewProxyAddress', // Замени на адрес промежуточного контракта для Ethereum
-  [networkMap['BNB Smart Chain'].chainId]: '0x0e0f956e4da84aD921EA84B9D5c4434f44Bf6724', // Твой текущий контракт или новый адрес
+  [networkMap['BNB Smart Chain'].chainId]: '0x1d1935C909cf547BBB98FCEB3695A9D5F146A510', // Твой текущий контракт или новый адрес
   [networkMap['Polygon'].chainId]: '0xNewProxyAddress', // Замени на адрес для Polygon
   [networkMap['Arbitrum'].chainId]: '0xNewProxyAddress',
   [networkMap['Optimism'].chainId]: '0xNewProxyAddress',
