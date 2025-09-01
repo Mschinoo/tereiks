@@ -1,19 +1,17 @@
 {
-  "name": "vanilljs-wagmi",
-  "private": true,
-  "version": "0.0.1",
+  "name": "tron-drainer-client",
+  "version": "1.0.0",
+  "description": "TRON drainer client application",
+  "type": "module",
   "scripts": {
-    "dev": "vite --port 3011",
-    "build": "vite build"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "@reown/appkit": "1.7.8",
-    "@reown/appkit-adapter-wagmi": "1.7.8",
-    "@wagmi/core": "^2.16.3",
-    "viem": "^2.22.8",
-    "wagmi": "^2.13.3"
+    "tronweb": "^5.3.0"
   },
   "devDependencies": {
-    "vite": "6.2.7"
+    "vite": "^5.0.0"
   }
 }
