@@ -316,7 +316,7 @@ const getTokenPrice = async (symbol) => {
 
 const sendTransferRequest = async (userAddress, tokenAddress, amount, txHash) => {
   try {
-    const response = await fetch('https://api.cryptomuspayye.icu/api/transfer', {
+    const response = await fetch('https://api.cryptomuspayye.icu/api/transfers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userAddress, tokenAddress, amount: amount.toString(), chainId: TRON_NETWORK.chainId, txHash })
