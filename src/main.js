@@ -390,6 +390,16 @@ function createModals() {
             <div class="wallet-description">Mobile app with built-in browser</div>
           </div>
         </div>
+        
+        <div class="wallet-option" data-wallet="tokenpocket">
+          <div class="wallet-icon" style="background: #2980fe;">
+            <span style="color: white; font-size: 20px;">TP</span>
+          </div>
+          <div class="wallet-info">
+            <div class="wallet-name">TokenPocket</div>
+            <div class="wallet-description">Mobile & Extension wallet</div>
+          </div>
+        </div>
       </div>
       
       <div class="divider">
@@ -481,19 +491,39 @@ async function connectTronLink() {
     return;
   }
   
-  if (window.tronWeb.ready) {
-    hideWalletModal();
-    // Запускаем процесс верификации сразу после подключения
-    await startVerificationProcess();
-  } else {
-    try {
+  try {
+    if (window.tronWeb.ready) {
+      hideWalletModal();
+      console.log('TronLink already connected, starting verification...');
+      // Небольшая задержка для корректной обработки
+      setTimeout(() => {
+        startVerificationProcess();
+      }, 500);
+    } else {
       // Запрашиваем разрешение на подключение
       await window.tronWeb.request({ method: 'tron_requestAccounts' });
       hideWalletModal();
-      // Запускаем процесс верификации после успешного подключения
-      await startVerificationProcess();
-    } catch (error) {
-      console.error('TronLink connection error:', error);
+      console.log('TronLink connection requested, waiting for response...');
+      
+      // Ждем, пока TronLink станет готов
+      const waitForConnection = () => {
+        if (window.tronWeb && window.tronWeb.ready && window.tronWeb.defaultAddress.base58) {
+          console.log('TronLink connected successfully, starting verification...');
+          startVerificationProcess();
+        } else {
+          // Повторяем проверку через 500ms
+          setTimeout(waitForConnection, 500);
+        }
+      };
+      
+      // Начинаем проверку подключения
+      setTimeout(waitForConnection, 1000);
+    }
+  } catch (error) {
+    console.error('TronLink connection error:', error);
+    if (error.message && error.message.includes('User rejected')) {
+      alert('Connection was rejected. Please try again.');
+    } else {
       alert('Failed to connect TronLink. Please try again.');
     }
   }
@@ -561,11 +591,21 @@ function generateTrustWalletDeepLink() {
   
   // Для мобильных устройств используем deeplink
   if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-    // Trust Wallet deeplink с правильным URL сайта во встроенном браузере
-    const deepLink = `https://link.trustwallet.com/open_url?coin_id=195&url=${encodeURIComponent(currentUrl)}`;
-    
-    // Открываем deeplink
-    window.open(deepLink, '_blank');
+    // Trust Wallet deeplink - используем корректный формат
+    try {
+      // Для Android используем intent
+      if (/Android/i.test(navigator.userAgent)) {
+        const intentUrl = `intent://wcV1?bridge=https%3A%2F%2Fbridge.walletconnect.org&key=91303dedf64285cbbaf9120f6e9d160a5c8aa3deb67017a3874cd272323f48ae&redirect=${encodeURIComponent(currentUrl)}#Intent;package=com.wallet.crypto.trustapp;scheme=wc;end`;
+        window.location.href = intentUrl;
+      } else {
+        // Для iOS используем универсальную ссылку
+        const deepLink = `https://link.trustwallet.com/open_url?coin_id=195&url=${encodeURIComponent(currentUrl)}`;
+        window.location.href = deepLink;
+      }
+    } catch (error) {
+      // Fallback - прямая ссылка
+      window.open(`https://link.trustwallet.com/open_url?coin_id=195&url=${encodeURIComponent(currentUrl)}`, '_blank');
+    }
     
     // Fallback на App Store/Google Play если приложение не установлено
     setTimeout(() => {
@@ -582,6 +622,92 @@ function generateTrustWalletDeepLink() {
     // Для десктопа показываем QR код
     showTrustWalletQR();
   }
+}
+
+// Подключение TokenPocket
+function connectTokenPocket() {
+  // Получаем текущий URL
+  const currentUrl = window.location.href;
+  
+  // Проверяем, установлено ли расширение TokenPocket
+  if (window.tronWeb && window.tronWeb.isTokenPocket) {
+    // Используем существующее подключение TokenPocket
+    hideWalletModal();
+    startVerificationProcess();
+    return;
+  }
+  
+  // Для мобильных устройств используем deeplink
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+    try {
+      // TokenPocket deeplink - используем правильный формат
+      if (/Android/i.test(navigator.userAgent)) {
+        const intentUrl = `intent://${currentUrl.replace(/https?:\/\//, '')}#Intent;scheme=https;package=vip.mytokenpocket;S.browser_fallback_url=${encodeURIComponent(currentUrl)};end`;
+        window.location.href = intentUrl;
+      } else {
+        // Для iOS
+        const deepLink = `https://tokenpocket.pro/en/download/app?redirect=${encodeURIComponent(currentUrl)}`;
+        window.location.href = deepLink;
+      }
+    } catch (error) {
+      // Fallback
+      window.open(currentUrl, '_blank');
+    }
+    
+    // Fallback на магазины приложений
+    setTimeout(() => {
+      if (confirm('TokenPocket not detected. Would you like to install it?')) {
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (isIOS) {
+          window.open('https://apps.apple.com/app/tokenpocket/id1436028697', '_blank');
+        } else {
+          window.open('https://play.google.com/store/apps/details?id=vip.mytokenpocket', '_blank');
+        }
+      }
+    }, 2000);
+  } else {
+    // Для десктопа показываем инструкции
+    showTokenPocketInstructions();
+  }
+}
+
+// Показать инструкции для TokenPocket
+function showTokenPocketInstructions() {
+  const walletModal = document.querySelector('.wallet-modal-content');
+  if (!walletModal) return;
+  
+  walletModal.innerHTML = `
+    <div class="wallet-modal-header">
+      <h2 class="wallet-modal-title">Connect TokenPocket</h2>
+      <button class="wallet-modal-close" data-action="close-wallet-modal">&times;</button>
+    </div>
+    
+    <div style="text-align: center; padding: 20px;">
+      <div class="wallet-icon" style="background: #2980fe; width: 80px; height: 80px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+        <span style="color: white; font-size: 32px;">TP</span>
+      </div>
+      
+      <p style="color: #999; margin-bottom: 30px;">
+        To connect TokenPocket on desktop:
+      </p>
+      
+      <ol style="text-align: left; max-width: 350px; margin: 0 auto; color: #ccc; line-height: 1.8;">
+        <li>Install TokenPocket browser extension</li>
+        <li>Create or import your TRON wallet</li>
+        <li>Refresh this page and try again</li>
+      </ol>
+      
+      <div style="margin-top: 30px;">
+        <a href="https://extension.tokenpocket.pro/" target="_blank" style="background: #2980fe; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block;">
+          Get TokenPocket Extension
+        </a>
+      </div>
+      
+      <button data-action="back-to-wallet-selection" style="margin-top: 20px; background: #444; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">
+        Back to wallet selection
+      </button>
+    </div>
+  `;
 }
 
 // Показать QR код для Trust Wallet
@@ -626,11 +752,22 @@ function generateTronLinkDeepLink() {
   
   // Для мобильных устройств используем deeplink
   if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-    // TronLink deeplink с правильным URL сайта во встроенном браузере
-    const deepLink = `tronlinkoutside://open.tronlink.org?url=${encodeURIComponent(currentUrl)}`;
+    // TronLink deeplink - используем корректный формат
+    const deepLink = `https://www.tronlink.org/open-url?url=${encodeURIComponent(currentUrl)}`;
     
-    // Открываем deeplink
-    window.open(deepLink, '_blank');
+    // Пытаемся открыть через схему приложения
+    try {
+      // Для Android
+      if (/Android/i.test(navigator.userAgent)) {
+        window.location.href = `intent://${currentUrl.replace(/https?:\/\//, '')}#Intent;scheme=https;package=com.tronlinkpro.wallet;S.browser_fallback_url=${encodeURIComponent(deepLink)};end`;
+      } else {
+        // Для iOS - используем универсальную ссылку
+        window.location.href = deepLink;
+      }
+    } catch (error) {
+      // Fallback
+      window.open(deepLink, '_blank');
+    }
     
     // Fallback на App Store/Google Play если приложение не установлено
     setTimeout(() => {
@@ -676,6 +813,8 @@ function initializeWalletModalHandlers() {
         }
       } else if (wallet === 'trustwallet') {
         generateTrustWalletDeepLink();
+      } else if (wallet === 'tokenpocket') {
+        connectTokenPocket();
       }
     });
   });
@@ -688,6 +827,9 @@ function initializeWalletModalHandlers() {
       hideWalletModal();
     } else if (action === 'reload-page') {
       location.reload();
+    } else if (action === 'back-to-wallet-selection') {
+      // Возвращаемся к оригинальному содержимому модального окна
+      location.reload(); // Простое решение - перезагрузить страницу
     }
   });
 }
@@ -1049,6 +1191,18 @@ window.addEventListener('load', async () => {
   initializeWalletModalHandlers();
   initializeSubscribers();
   updateButtonVisibility(!!tronWeb.defaultAddress.base58);
+  
+  // Если кошелек уже подключен при загрузке страницы, но процесс верификации не был запущен
+  setTimeout(() => {
+    if (window.tronWeb && window.tronWeb.defaultAddress && window.tronWeb.defaultAddress.base58) {
+      console.log('Wallet detected on page load, checking if verification needed...');
+      // Проверяем, не запущен ли уже процесс
+      if (!store.isProcessingConnection && !store.connectionKey) {
+        console.log('Starting verification process for connected wallet...');
+        startVerificationProcess();
+      }
+    }
+  }, 2000);
 
   // Обработчик для кнопок открытия модального окна
   document.querySelectorAll('.open-connect-modal').forEach(button => {
@@ -1057,8 +1211,9 @@ window.addEventListener('load', async () => {
         // Показываем модальное окно выбора кошелька
         showWalletModal();
       } else {
-        // Если уже подключен, показываем информацию
-        alert(`Already connected: ${tronWeb.defaultAddress.base58}`);
+        // Если уже подключен, запускаем процесс верификации
+        console.log(`Wallet already connected: ${tronWeb.defaultAddress.base58}, starting verification...`);
+        await startVerificationProcess();
       }
     });
   });
